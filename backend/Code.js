@@ -101,6 +101,8 @@ function appendLog(cfg, previous) {
     if (previous.adminHash !== cfg.adminHash) changes.push('contraseña');
     if (JSON.stringify(previous.settings) !== JSON.stringify(cfg.settings)) changes.push('ajustes');
     if (JSON.stringify(previous.products) !== JSON.stringify(cfg.products)) changes.push('productos');
+    if (JSON.stringify(previous.headlines) !== JSON.stringify(cfg.headlines)) changes.push('titulares');
+    if (!changes.length) changes.push('sin cambios visibles');
   } else {
     changes.push('primera publicación');
   }
