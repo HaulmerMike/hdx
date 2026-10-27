@@ -2,6 +2,10 @@
 // que es el fragmento que se publica como artefacto en claude.ai.
 const fs = require('fs');
 let src = fs.readFileSync('src/index.html', 'utf8');
+// La versión publicada en Pages usa el backend de Apps Script; el artefacto de claude.ai no (su sandbox bloquea fetch externo).
+const backend = JSON.parse(fs.readFileSync('backend/deployment.json', 'utf8'));
+if (!src.includes("const BACKEND_URL='';")) throw new Error('No se encontró BACKEND_URL en src/index.html');
+src = src.replace("const BACKEND_URL='';", "const BACKEND_URL='" + backend.url + "';");
 const title = (src.match(/<title>[\s\S]*?<\/title>/) || [''])[0];
 src = src.replace(title, '').replace(/<meta name="claude:viewport-fit-sides"[^>]*>\s*/, '');
 const html = `<!doctype html>

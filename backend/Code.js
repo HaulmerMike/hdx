@@ -1,23 +1,27 @@
 /**
- * HDX · Backend de la mesa de control (Google Apps Script, vinculado a una hoja de cálculo).
+ * HDX · Backend de la mesa de control (Google Apps Script, aplicación web).
  *
- * Qué hace:
  *  - GET  → entrega la configuración vigente del mercado (JSON). Con ?rev=N responde {same:true} si no cambió.
+ *           Con ?log=1 entrega el registro de publicaciones.
  *  - POST → recibe {password, config}; verifica la contraseña contra el hash guardado y, si coincide,
- *           guarda la nueva configuración con rev+1 y deja una línea en la hoja "log".
+ *           guarda la nueva configuración con rev+1 y anota la publicación en el registro.
  *
- * Dónde guarda: hoja "config", celda A1 (JSON). Hoja "log": una fila por publicación.
+ * Almacena en Script Properties (no requiere autorización de Google), partiendo el JSON en trozos de 8 KB.
  * La contraseña nunca se guarda: solo su hash SHA-256, que viene dentro de la configuración (adminHash).
+ * Se edita y despliega con clasp desde el repositorio (carpeta backend/).
  */
 
-const CFG_SHEET = 'config';
-const LOG_SHEET = 'log';
+const CHUNK = 8000;
 const CACHE_KEY = 'hdx-config';
 const CACHE_SECONDS = 15;
+const LOG_KEY = 'hdx-log';
+const LOG_MAX = 100;
 
 function doGet(e) {
+  const p = (e && e.parameter) || {};
+  if (p.log) return json(readLog());
   const stored = readStored();
-  const rev = Number((e && e.parameter && e.parameter.rev) || -1);
+  const rev = Number(p.rev || -1);
   if (stored && stored.rev === rev) return json({ rev: rev, same: true });
   if (!stored) return json({ rev: 0, empty: true });
   return json(stored);
@@ -34,7 +38,7 @@ function doPost(e) {
     lock.waitLock(10000);
     try {
       const stored = readStored(true);
-      // La referencia es el hash ya guardado; si la hoja está vacía (primera publicación), el de la configuración enviada.
+      // La referencia es el hash ya guardado; si no hay nada guardado (primera publicación), el de la configuración enviada.
       const reference = stored && stored.adminHash ? stored.adminHash : cfg.adminHash;
       if (!reference || sha256(password) !== reference) return json({ ok: false, error: 'auth' });
 
@@ -51,12 +55,7 @@ function doPost(e) {
   }
 }
 
-/* ---------- almacenamiento ---------- */
-
-function sheet(name) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  return ss.getSheetByName(name) || ss.insertSheet(name);
-}
+/* ---------- almacenamiento en Script Properties ---------- */
 
 function readStored(skipCache) {
   const cache = CacheService.getScriptCache();
@@ -64,25 +63,38 @@ function readStored(skipCache) {
     const hit = cache.get(CACHE_KEY);
     if (hit) return JSON.parse(hit);
   }
-  const raw = sheet(CFG_SHEET).getRange('A1').getValue();
-  if (!raw) return null;
-  const cfg = JSON.parse(String(raw));
-  cache.put(CACHE_KEY, JSON.stringify(cfg), CACHE_SECONDS);
+  const props = PropertiesService.getScriptProperties();
+  const n = Number(props.getProperty('cfg_n') || 0);
+  if (!n) return null;
+  let text = '';
+  for (let i = 0; i < n; i++) text += props.getProperty('cfg_' + i) || '';
+  if (!text) return null;
+  const cfg = JSON.parse(text);
+  if (text.length < 100000) cache.put(CACHE_KEY, text, CACHE_SECONDS);
   return cfg;
 }
 
 function writeStored(cfg) {
   const text = JSON.stringify(cfg);
-  sheet(CFG_SHEET).getRange('A1').setValue(text);
-  CacheService.getScriptCache().put(CACHE_KEY, text, CACHE_SECONDS);
+  const props = PropertiesService.getScriptProperties();
+  const parts = {};
+  let n = 0;
+  for (let i = 0; i < text.length; i += CHUNK) parts['cfg_' + (n++)] = text.slice(i, i + CHUNK);
+  parts['cfg_n'] = String(n);
+  const old = Number(props.getProperty('cfg_n') || 0);
+  props.setProperties(parts);
+  for (let i = n; i < old; i++) props.deleteProperty('cfg_' + i);
+  if (text.length < 100000) CacheService.getScriptCache().put(CACHE_KEY, text, CACHE_SECONDS);
+}
+
+function readLog() {
+  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty(LOG_KEY) || '[]'); } catch (e) { return []; }
 }
 
 function appendLog(cfg, previous) {
-  const s = sheet(LOG_SHEET);
-  if (s.getLastRow() === 0) s.appendRow(['fecha', 'rev', 'eventos', 'productos', 'cambios']);
   const changes = [];
   if (previous) {
-    if (previous.openAt !== cfg.openAt) changes.push('apertura ' + new Date(cfg.openAt).toLocaleTimeString('es-CL'));
+    if (previous.openAt !== cfg.openAt) changes.push('apertura ' + new Date(cfg.openAt).toISOString());
     const prevEv = (previous.events || []).length, nowEv = (cfg.events || []).length;
     if (nowEv > prevEv) changes.push('evento ' + cfg.events[nowEv - 1].type);
     if (previous.nextRefillAt !== cfg.nextRefillAt) changes.push('refill anunciado');
@@ -92,7 +104,10 @@ function appendLog(cfg, previous) {
   } else {
     changes.push('primera publicación');
   }
-  s.appendRow([new Date(), cfg.rev, (cfg.events || []).length, (cfg.products || []).length, changes.join(', ')]);
+  const log = readLog();
+  log.push({ at: new Date().toISOString(), rev: cfg.rev, changes: changes.join(', ') });
+  while (log.length > LOG_MAX) log.shift();
+  PropertiesService.getScriptProperties().setProperty(LOG_KEY, JSON.stringify(log));
 }
 
 /* ---------- utilidades ---------- */
@@ -104,9 +119,4 @@ function sha256(text) {
 
 function json(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
-}
-
-/** Útil para probar desde el editor: muestra la configuración guardada. */
-function debugShow() {
-  Logger.log(JSON.stringify(readStored(true), null, 2));
 }

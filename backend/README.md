@@ -4,34 +4,29 @@ La página publicada lee la configuración del mercado desde este script cada 10
 y la mesa de control la escribe aquí. Así un Happy Hour, un refill o un pin llegan a la TV
 y a todos los teléfonos.
 
-## Despliegue (una vez, unos 5 minutos)
+- Script: `Code.js` (aplicación web de Apps Script, almacena en Script Properties, sin autorización de Google).
+- Manifiesto: `appsscript.json` (acceso: cualquier usuario, anónimo; se ejecuta como el dueño).
+- `deployment.json`: ids del script y de la implementación, y la URL `/exec` que `build.js` inyecta en `index.html`.
+- Contenedor: hoja de cálculo "HDX config" en el Drive de Miguel (sin uso por ahora).
 
-1. Crea una hoja de cálculo nueva en Google Drive, por ejemplo `HDX config`.
-2. En la hoja: **Extensiones → Apps Script**. Borra el contenido de `Código.gs` y pega el de `backend/Code.gs`. Guarda.
-3. **Implementar → Nueva implementación**. Tipo: **Aplicación web**.
-   - Descripción: `HDX`.
-   - Ejecutar como: **Yo**.
-   - Quién tiene acceso: **Cualquier usuario** (necesario para que la TV y los teléfonos lean sin iniciar sesión).
-   - Autoriza los permisos cuando los pida.
-4. Copia la **URL de la aplicación web** (termina en `/exec`).
-5. Pega esa URL en `src/index.html`, en la constante `BACKEND_URL`, ejecuta `node build.js` y sube los cambios.
-6. Abre la página con `#admin`, entra con la contraseña y pulsa **Publicar cambios** una vez: esa primera
-   publicación deja la configuración guardada en la hoja.
+## Editar y desplegar (clasp, ya autenticado en esta máquina)
 
-Para cambiar el código del script más adelante: pega la versión nueva y haz **Implementar → Administrar
-implementaciones → editar → Versión: Nueva**. La URL se mantiene.
+```bash
+cd backend && clasp push --force && clasp deploy -i AKfycbzJiQlKQd0Z9rwzcP4d38dVPdxZvsncmq_st8JxVFu7zuGoAsPPst6QbbLwYc9Kknw6 -d "descripción"
+```
 
-## Cómo funciona
+La URL no cambia entre versiones. Un `push` sin `deploy` solo actualiza el borrador (HEAD), no la URL publicada.
 
-- `GET <url>?rev=N` responde `{same:true}` si la configuración no cambió, o la configuración completa.
-- `POST <url>` con cuerpo `{"password": "...", "config": {...}}` (como texto plano, para evitar el
-  preflight de CORS) guarda la configuración si la contraseña coincide con el hash guardado.
-- La hoja `config` guarda el JSON en A1; la hoja `log` registra cada publicación.
+## API
+
+- `GET <url>?rev=N` → `{same:true}` si no cambió; si no, la configuración completa. Sin nada guardado: `{rev:0, empty:true}`.
+- `GET <url>?log=1` → registro de publicaciones (últimas 100).
+- `POST <url>` con cuerpo `{"password": "...", "config": {...}}` como texto plano (evita el preflight de CORS).
+  Responde `{ok:true, rev}` o `{ok:false, error:"auth"|"config"}`.
 - Lecturas con caché de 15 segundos para soportar muchos teléfonos consultando a la vez.
 
 ## Seguridad
 
 - La contraseña viaja por HTTPS y nunca se guarda; el script compara su SHA-256 con el hash guardado.
-- Si la hoja está vacía, la primera publicación se acepta cuando la contraseña coincide con el hash
-  de la configuración enviada. Haz esa primera publicación apenas despliegues.
-- Cambiar la contraseña desde la admin requiere la contraseña vigente.
+- Sin nada guardado, la primera publicación se acepta cuando la contraseña coincide con el hash de la
+  configuración enviada. Cambiar la contraseña desde la admin requiere la vigente.
