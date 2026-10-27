@@ -329,11 +329,14 @@ html:not([data-theme="light"]) .btn.primary{ color:#0B0B0D; }
 <script>
 (function(){
 'use strict';
+/* URL de la aplicación web de Apps Script (backend/README.md). Vacío = sin backend: la admin guarda solo en este navegador
+   o, dentro del artefacto de claude.ai, republica el artefacto. */
+const BACKEND_URL='';
 /* ---------- config ---------- */
 const cfgEl=document.getElementById('hdx-config');
 let CFG=JSON.parse(cfgEl.textContent);
-try{ const lo=localStorage.getItem('hdx-local-cfg'); if(lo){ const o=JSON.parse(lo); if(o&&o.version===CFG.version&&(o.rev||0)>(CFG.rev||0)) CFG=o; else localStorage.removeItem('hdx-local-cfg'); } }catch(e){}
-let LOCAL_ONLY=false; try{ LOCAL_ONLY=!!localStorage.getItem('hdx-local-cfg'); }catch(e){}
+try{ const lo= BACKEND_URL? null : localStorage.getItem('hdx-local-cfg'); if(lo){ const o=JSON.parse(lo); if(o&&o.version===CFG.version&&(o.rev||0)>(CFG.rev||0)) CFG=o; else localStorage.removeItem('hdx-local-cfg'); } }catch(e){}
+let LOCAL_ONLY=false; try{ LOCAL_ONLY= !BACKEND_URL && !!localStorage.getItem('hdx-local-cfg'); }catch(e){}
 
 /* ---------- constants (timing derived from settings.moveSec) ---------- */
 const MOVE_MS=Math.max(3,Math.min(120,+(CFG.settings&&CFG.settings.moveSec)||15))*1000;
@@ -767,6 +770,24 @@ function updateOverlay(now){
   if(key!==lastOverlayKey){ lastOverlayKey=key; if(key){ ov.innerHTML=`<div class="box">${html}</div>`; ov.hidden=false; sfx(snd); } else { ov.hidden=true; ov.innerHTML=''; } }
 }
 
+/* ---------- backend (Apps Script) ---------- */
+let backendRev=null, backendOk=false, adminPw='', pendingPw='';
+function usingBackend(){ return !!BACKEND_URL; }
+async function backendFetch(){ const u=BACKEND_URL+(BACKEND_URL.includes('?')?'&':'?')+'rev='+(backendRev==null?-1:backendRev)+'&_='+Date.now(); const r=await fetch(u,{cache:'no-store'}); if(!r.ok) throw new Error('http '+r.status); return r.json(); }
+function applyRemote(cfg){
+  const prevMove=(CFG.settings&&CFG.settings.moveSec)||15; CFG=cfg; backendRev=cfg.rev; LOCAL_ONLY=false;
+  if(((cfg.settings&&cfg.settings.moveSec)||15)!==prevMove){ try{ sessionStorage.setItem('hdx-view',view); }catch(e){} try{ location.reload(); }catch(e){} return; }
+  sim=newSim(CFG); boardSig=''; lastRenderedK=-2; nextT='';
+  if(view==='admin'){ if(!draft || !dirty()){ draft=null; if(unlocked) renderAdmin(); } else toast('Hay una configuración nueva publicada por otra persona. Tus cambios sin publicar se mantienen.','',6000); }
+  else if(shellBuilt){ buildTape(); buildNews(); tick(); }
+}
+async function backendPoll(){
+  if(!usingBackend()) return;
+  try{ const d=await backendFetch(); backendOk=true; if(d && d.same) return; if(d && d.empty){ backendRev=0; return; } if(d && d.rev!=null && d.rev!==backendRev) applyRemote(d); }
+  catch(e){ backendOk=false; }
+  const pill=$('#pubstate'); if(pill){ pill.className='pill '+(backendOk?'ok':'warn'); pill.textContent= backendOk?'compartida (servidor)':'servidor sin respuesta'; }
+}
+
 /* ---------- main loop ---------- */
 let shellBuilt=false;
 function tick(){
@@ -785,7 +806,7 @@ async function sha256(s){ const b=new TextEncoder().encode(s); const h=await cry
 let draft=null, unlocked=false; try{ unlocked=sessionStorage.getItem('hdx-admin')==='1'; }catch(e){}
 function toast(msg,kind,ms){ let t=$('.toast'); if(!t){ t=document.createElement('div'); t.className='toast'; document.body.appendChild(t); } t.className='toast '+(kind||''); t.textContent=msg; clearTimeout(t._to); t._to=setTimeout(()=>t.remove(),ms||3500); }
 function renderGate(err){ document.documentElement.classList.remove('tv'); app.innerHTML=`<div class="admin"><div class="gate card"><span class="eyebrow">HDX · Mesa de control</span><h1>Acceso restringido</h1><p class="note">Ingresa la contraseña de la organización. La página solo guarda un hash; la contraseña nunca viaja en el código.</p><label>Contraseña<input id="pw" type="password" autocomplete="current-password"></label><div class="err" id="err">${esc(err||'')}</div><button class="btn primary" id="enter">Entrar</button><p class="note">Sin contraseña: vuelve al tablero quitando <code>#admin</code> del enlace.</p></div></div>`;
-  const go=async()=>{ const v=$('#pw').value; if(!window.crypto||!crypto.subtle){ $('#err').textContent='Este navegador no permite verificar la contraseña (se requiere HTTPS).'; return; } const h=await sha256(v); if(h===CFG.adminHash){ unlocked=true; try{ sessionStorage.setItem('hdx-admin','1'); }catch(e){} renderAdmin(); } else { $('#err').textContent='Contraseña incorrecta.'; } };
+  const go=async()=>{ const v=$('#pw').value; if(!window.crypto||!crypto.subtle){ $('#err').textContent='Este navegador no permite verificar la contraseña (se requiere HTTPS).'; return; } const h=await sha256(v); if(h===CFG.adminHash){ unlocked=true; adminPw=v; try{ sessionStorage.setItem('hdx-admin','1'); }catch(e){} renderAdmin(); } else { $('#err').textContent='Contraseña incorrecta.'; } };
   $('#enter').addEventListener('click',go); $('#pw').addEventListener('keydown',e=>{ if(e.key==='Enter') go(); }); $('#pw').focus();
 }
 function deriveMoveSec(c){ const n=Math.max(1,c.products.filter(p=>!p.hidden).length); return Math.max(3,Math.min(120,Math.round((c.settings.productMin||4)*60/n))); }
@@ -796,7 +817,7 @@ function renderAdmin(){
   const openTxt= info.status==='pre'?`abre a las ${hhmm(draft.openAt)}`: info.status==='closed'?'cerrado':`abierto desde las ${hhmm(draft.openAt)} (cierra ${hhmm(draft.openAt+draft.sessionHours*3600000)})`;
   const prodRows=draft.products.map((p,i)=>`<tr><td><input class="name" data-i="${i}" data-k="t" value="${esc(p.t)}" maxlength="4" style="width:4.5rem;text-transform:uppercase"></td><td><input class="name" data-i="${i}" data-k="name" value="${esc(p.name)}"></td><td><input class="name" data-i="${i}" data-k="sector" value="${esc(p.sector)}" style="width:7rem"></td><td><input type="number" data-i="${i}" data-k="base" value="${p.base}" step="50" min="100" max="500"></td><td><input type="number" data-i="${i}" data-k="stock" value="${p.stock}" min="0"></td><td><input type="number" data-i="${i}" data-k="pop" value="${p.pop}" step="0.1" min="0.1" max="3"></td><td style="text-align:center"><input type="checkbox" data-i="${i}" data-k="pinned" ${p.pinned||p.pin?'checked':''} style="width:auto"></td><td><input class="pin" data-i="${i}" data-k="pin" value="${esc(p.pin||'')}" placeholder="Ej. Trago de la casa"></td><td style="text-align:center"><input type="checkbox" data-i="${i}" data-k="hidden" ${p.hidden?'checked':''} style="width:auto"></td><td><div class="evbtns"><button class="btn ghost" data-imp="${i}" title="Inyecta 8 ventas ahora">+8 ventas</button><button class="btn danger" data-del="${i}">Quitar</button></div></td></tr>`).join('');
   app.innerHTML=`<div class="admin">
-    <div class="statusbar"><div class="msg"><b>Mesa de control HDX</b> · Mercado ${openTxt} · Publicación: <span class="pill ${LOCAL_ONLY?'warn':'ok'}" id="pubstate">${LOCAL_ONLY?'solo este navegador':'compartida'}</span></div>
+    <div class="statusbar"><div class="msg"><b>Mesa de control HDX</b> · Mercado ${openTxt} · Publicación: <span class="pill ${usingBackend()?(backendOk?'ok':'warn'):LOCAL_ONLY?'warn':'ok'}" id="pubstate">${usingBackend()?(backendOk?'compartida (servidor)':'servidor sin respuesta'):LOCAL_ONLY?'solo este navegador':'compartida'}</span></div>
       <button class="btn ghost" id="discard">Descartar cambios</button><button class="btn primary" id="publish">Publicar cambios</button><a class="btn ghost" href="#" id="toboard">Ver tablero</a><button class="btn ghost" id="theme">${theme==='light'?'\u263E Noche':'\u2600\uFE0E Día'}</button></div>
     <p class="note">Los cambios se aplican a todas las pantallas al publicar. Si la publicación no está disponible, se guardan solo en este navegador y así lo indica el estado.</p>
 
@@ -877,7 +898,7 @@ function renderAdmin(){
   bind('endLast',()=>{ const e=lastCallAt(draft,Date.now()); if(e){ e.dur=Math.max(0.01,(Date.now()-e.at)/60000); toast('Último llamado termina al publicar'); renderAdmin(); } });
   bind('lastcall',()=>{ draft.events=(draft.events||[]).concat([{type:'last',at:Date.now()+1500,dur:+$('#lmin').value||10}]); toast('Último llamado al publicar'); renderAdmin(); });
   bind('ipo',()=>{ const t=($('#ipoT').value||'').toUpperCase().trim(), n=$('#ipoN').value.trim(); if(!t||!n){ toast('Falta ticker o nombre'); return; } const at=Date.now()+1500; draft.products.push({t,name:n,sector:$('#ipoS').value.trim()||'Cócteles',base:+$('#ipoB').value||300,stock:+$('#ipoK').value||60,pop:1.2,pin:'',hidden:false,ipoAt:at}); draft.events=(draft.events||[]).concat([{type:'ipo',at,t,name:n,base:+$('#ipoB').value||300}]); toast('IPO lista al publicar'); renderAdmin(); });
-  bind('setpw',async()=>{ const a=$('#np1').value, b=$('#np2').value; if(a.length<12){ toast('Usa al menos 12 caracteres'); return; } if(a!==b){ toast('Las contraseñas no coinciden'); return; } draft.adminHash=await sha256(a); toast('Contraseña lista al publicar'); upd(); });
+  bind('setpw',async()=>{ const a=$('#np1').value, b=$('#np2').value; if(a.length<12){ toast('Usa al menos 12 caracteres'); return; } if(a!==b){ toast('Las contraseñas no coinciden'); return; } draft.adminHash=await sha256(a); pendingPw=a; toast('Contraseña lista al publicar'); upd(); });
   bind('discard',()=>{ draft=null; renderAdmin(); });
   bind('toboard',()=>{ view=''; try{ sessionStorage.setItem('hdx-view',''); }catch(e){} shellBuilt=false; boardSig=''; lastRenderedK=-2; start(); });
   bind('publish',publishDraft);
@@ -887,6 +908,17 @@ function renderAdmin(){
 async function publishDraft(){
   if(!dirty()) return; const btn=$('#publish'); btn.disabled=true; btn.textContent='Publicando…';
   const newCfg=JSON.parse(JSON.stringify(draft)); newCfg.rev=(CFG.rev||0)+1; newCfg.updatedAt=Date.now(); newCfg.settings.moveSec=deriveMoveSec(newCfg);
+  if(usingBackend()){
+    if(!adminPw){ toast('Vuelve a ingresar la contraseña para publicar.'); unlocked=false; renderGate(); return; }
+    try{
+      const r=await fetch(BACKEND_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({password:adminPw,config:newCfg})});
+      const d=await r.json();
+      if(d && d.ok){ newCfg.rev=d.rev; if(pendingPw){ adminPw=pendingPw; pendingPw=''; } draft=null; backendOk=true; applyRemote(newCfg); toast('Publicado. Todas las pantallas se actualizan en unos segundos.'); }
+      else if(d && d.error==='auth'){ toast('El servidor rechazó la contraseña. Vuelve a ingresarla.','',6000); adminPw=''; unlocked=false; renderGate(); }
+      else { toast('El servidor no aceptó la publicación: '+((d&&d.error)||'error'),'',6000); btn.disabled=false; btn.textContent='Publicar cambios'; }
+    }catch(e){ toast('Sin conexión con el servidor. Tus cambios siguen aquí; intenta de nuevo.','',6000); btn.disabled=false; btn.textContent='Publicar cambios'; }
+    return;
+  }
   const json=JSON.stringify(newCfg).replace(/<\//g,'<\\/');
   let mode='local', err='';
   try{
@@ -915,7 +947,8 @@ function start(){
   tick(); loop=setInterval(tick,250);
 }
 window.addEventListener('hashchange',()=>{ const v=(location.hash||'').replace('#',''); view=(v==='tv'||v==='admin')?v:''; try{ sessionStorage.setItem('hdx-view',view); }catch(e){} shellBuilt=false; boardSig=''; lastRenderedK=-2; start(); });
-document.addEventListener('visibilitychange',()=>{ if(!document.hidden && view!=='admin') tick(); });
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden && view!=='admin') tick(); if(!document.hidden) backendPoll(); });
 start();
+if(usingBackend()){ backendPoll(); setInterval(backendPoll,10000); }
 })();
 </script>
