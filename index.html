@@ -222,6 +222,18 @@ html.tv .trend{ font-size:1.2rem; }
 #overlay .rank li{ font-size:1.2rem; padding:.7rem 1rem; }
 #overlay .bell{ font-size:3rem; }
 
+/* QR panel (TV): slides in from the right for a few seconds, every few minutes */
+.qrpanel{ position:fixed; right:0; top:50%; z-index:45; transform:translate(115%,-50%); transition:transform .7s cubic-bezier(.2,.9,.3,1.1); background:var(--card); border:1px solid var(--border); border-right:0; border-radius:20px 0 0 20px; padding:1.4rem 1.6rem 1.4rem 1.4rem; display:flex; align-items:center; gap:1.4rem; box-shadow:0 20px 60px rgba(0,0,0,.45); max-width:min(92vw,40rem); }
+.qrpanel.on{ transform:translate(0,-50%); }
+.qrpanel .qr{ background:#fff; border-radius:12px; padding:.6rem; flex:none; line-height:0; }
+.qrpanel .qr svg{ width:clamp(7rem,14vw,12rem); height:auto; display:block; }
+.qrpanel .txt{ min-width:0; }
+.qrpanel .txt .big{ font-family:var(--font-title); font-weight:700; font-size:clamp(1.1rem,2vw,1.8rem); line-height:1.15; letter-spacing:-.02em; }
+.qrpanel .txt .url{ margin-top:.5rem; font-size:.9rem; color:var(--text-2); word-break:break-all; }
+.qrpanel .txt .hint{ margin-top:.4rem; font-size:.78rem; color:var(--text-3); }
+html:not(.tv) .qrpanel{ display:none; }
+@media (prefers-reduced-motion:reduce){ .qrpanel{ transition:none; } }
+
 /* Sheet (detail / follow dialogs) */
 #sheet{ position:fixed; inset:0; z-index:55; display:flex; align-items:flex-end; justify-content:center; }
 #sheet .bg{ position:absolute; inset:0; background:var(--scrim-2); }
@@ -327,12 +339,14 @@ html:not([data-theme="light"]) .btn.primary{ color:#0B0B0D; }
 }
 </style>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
 <div id="app"></div>
 <div id="pulse" aria-hidden="true"></div>
 <div id="overlay" hidden></div>
 <div id="sheet" hidden></div>
+<aside id="qrpanel" class="qrpanel" aria-hidden="true"></aside>
 
-<script type="application/json" id="hdx-config">{"version":1,"rev":2,"updatedAt":0,"seed":2026114,"openAt":1793068873481,"sessionHours":8,"adminHash":"65613a7ae0e9c78ad55473179b790164d46d1a1c4cf1477f57f105dba6a9e983","products":[{"t":"PSCL","name":"Piscola","sector":"Combinados","base":250,"stock":400,"pop":1.5,"pin":"Trago de la casa","pinned":true,"hidden":false},{"t":"CERV","name":"Cerveza","sector":"Cerveza","base":200,"stock":550,"pop":1.7,"pin":"","hidden":false},{"t":"GINT","name":"Gin tónic","sector":"Combinados","base":300,"stock":300,"pop":1.2,"pin":"","hidden":false},{"t":"WSKL","name":"Wiscola","sector":"Combinados","base":300,"stock":225,"pop":0.8,"pin":"","hidden":false},{"t":"MOJT","name":"Mojito","sector":"Cócteles","base":350,"stock":200,"pop":1,"pin":"","hidden":false},{"t":"BEBD","name":"Bebida","sector":"Sin alcohol","base":100,"stock":500,"pop":1.1,"pin":"","hidden":false},{"t":"AGUA","name":"Agua","sector":"Sin alcohol","base":100,"stock":625,"pop":1,"pin":"","hidden":false},{"t":"JUGO","name":"Jugo","sector":"Sin alcohol","base":150,"stock":250,"pop":0.5,"pin":"","hidden":false},{"t":"RBLL","name":"Redbull","sector":"Sin alcohol","base":200,"stock":225,"pop":0.7,"pin":"","hidden":false},{"t":"SANG","name":"Sangría","sector":"Cócteles","base":250,"stock":175,"pop":0.7,"pin":"","hidden":false},{"t":"APRL","name":"Aperol Spritz","sector":"Cócteles","base":400,"stock":200,"pop":1.1,"pin":"","hidden":false},{"t":"MARG","name":"Tequila margarita","sector":"Cócteles","base":400,"stock":175,"pop":0.9,"pin":"","hidden":false},{"t":"CAIP","name":"Caipirinha","sector":"Cócteles","base":350,"stock":175,"pop":0.8,"pin":"","hidden":false},{"t":"FRNT","name":"Fernet","sector":"Combinados","base":300,"stock":200,"pop":0.9,"pin":"","hidden":false},{"t":"TGIN","name":"Tropical Gin","sector":"Combinados","base":350,"stock":175,"pop":0.8,"pin":"","hidden":false},{"t":"MICH","name":"Michelada","sector":"Cócteles","base":250,"stock":150,"pop":0.6,"pin":"","hidden":false},{"t":"RAMZ","name":"Ramazzotti","sector":"Combinados","base":300,"stock":150,"pop":0.6,"pin":"","hidden":false}],"events":[],"impulses":[],"nextRefillAt":null,"headlines":["Haulmerland abre su primera bolsa de tragos: analistas esperan alta volatilidad","AndCo. confirma: las transferencias entre traders están habilitadas toda la noche"],"settings":{"tvRotateSec":20,"rankingEveryMin":10,"rankingShowSec":15,"soundDefault":true,"tier1":8,"tier2":8,"happyPct":30,"balance":5000,"refillAmount":2000,"productMin":4,"moveSec":14}}</script>
+<script type="application/json" id="hdx-config">{"version":1,"rev":2,"updatedAt":0,"seed":2026114,"openAt":1793068873481,"sessionHours":8,"adminHash":"65613a7ae0e9c78ad55473179b790164d46d1a1c4cf1477f57f105dba6a9e983","products":[{"t":"PSCL","name":"Piscola","sector":"Combinados","base":250,"stock":400,"pop":1.5,"pin":"Trago de la casa","pinned":true,"hidden":false},{"t":"CERV","name":"Cerveza","sector":"Cerveza","base":200,"stock":550,"pop":1.7,"pin":"","hidden":false},{"t":"GINT","name":"Gin tónic","sector":"Combinados","base":300,"stock":300,"pop":1.2,"pin":"","hidden":false},{"t":"WSKL","name":"Wiscola","sector":"Combinados","base":300,"stock":225,"pop":0.8,"pin":"","hidden":false},{"t":"MOJT","name":"Mojito","sector":"Cócteles","base":350,"stock":200,"pop":1,"pin":"","hidden":false},{"t":"BEBD","name":"Bebida","sector":"Sin alcohol","base":100,"stock":500,"pop":1.1,"pin":"","hidden":false},{"t":"AGUA","name":"Agua","sector":"Sin alcohol","base":100,"stock":625,"pop":1,"pin":"","hidden":false},{"t":"JUGO","name":"Jugo","sector":"Sin alcohol","base":150,"stock":250,"pop":0.5,"pin":"","hidden":false},{"t":"RBLL","name":"Redbull","sector":"Sin alcohol","base":200,"stock":225,"pop":0.7,"pin":"","hidden":false},{"t":"SANG","name":"Sangría","sector":"Cócteles","base":250,"stock":175,"pop":0.7,"pin":"","hidden":false},{"t":"APRL","name":"Aperol Spritz","sector":"Cócteles","base":400,"stock":200,"pop":1.1,"pin":"","hidden":false},{"t":"MARG","name":"Tequila margarita","sector":"Cócteles","base":400,"stock":175,"pop":0.9,"pin":"","hidden":false},{"t":"CAIP","name":"Caipirinha","sector":"Cócteles","base":350,"stock":175,"pop":0.8,"pin":"","hidden":false},{"t":"FRNT","name":"Fernet","sector":"Combinados","base":300,"stock":200,"pop":0.9,"pin":"","hidden":false},{"t":"TGIN","name":"Tropical Gin","sector":"Combinados","base":350,"stock":175,"pop":0.8,"pin":"","hidden":false},{"t":"MICH","name":"Michelada","sector":"Cócteles","base":250,"stock":150,"pop":0.6,"pin":"","hidden":false},{"t":"RAMZ","name":"Ramazzotti","sector":"Combinados","base":300,"stock":150,"pop":0.6,"pin":"","hidden":false}],"events":[],"impulses":[],"nextRefillAt":null,"headlines":["Haulmerland abre su primera bolsa de tragos: analistas esperan alta volatilidad","AndCo. confirma: las transferencias entre traders están habilitadas toda la noche"],"settings":{"tvRotateSec":20,"rankingEveryMin":10,"rankingShowSec":15,"soundDefault":true,"tier1":8,"tier2":8,"happyPct":30,"balance":5000,"refillAmount":2000,"productMin":4,"moveSec":14,"qrEveryMin":3,"qrShowSec":20,"qrUrl":""}}</script>
 
 <script>
 (function(){
@@ -343,7 +357,10 @@ const BACKEND_URL='https://script.google.com/macros/s/AKfycbzJiQlKQd0Z9rwzcP4d38
 /* ---------- config ---------- */
 const cfgEl=document.getElementById('hdx-config');
 let CFG=JSON.parse(cfgEl.textContent);
-try{ const lo= BACKEND_URL? null : localStorage.getItem('hdx-local-cfg'); if(lo){ const o=JSON.parse(lo); if(o&&o.version===CFG.version&&(o.rev||0)>(CFG.rev||0)) CFG=o; else localStorage.removeItem('hdx-local-cfg'); } }catch(e){}
+const DEFAULT_SETTINGS=Object.assign({},CFG.settings);
+// Una configuración guardada antes de agregar un ajuste nuevo no lo trae: se completa con el valor por defecto.
+function withDefaults(cfg){ cfg.settings=Object.assign({},DEFAULT_SETTINGS,cfg.settings||{}); return cfg; }
+try{ const lo= BACKEND_URL? null : localStorage.getItem('hdx-local-cfg'); if(lo){ const o=JSON.parse(lo); if(o&&o.version===CFG.version&&(o.rev||0)>(CFG.rev||0)) CFG=withDefaults(o); else localStorage.removeItem('hdx-local-cfg'); } }catch(e){}
 let LOCAL_ONLY=false; try{ LOCAL_ONLY= !BACKEND_URL && !!localStorage.getItem('hdx-local-cfg'); }catch(e){}
 
 /* ---------- constants (timing derived from settings.moveSec) ---------- */
@@ -765,6 +782,15 @@ function updateHeader(now,info){
   const cd=$('#bcd'); if(cd){ const end= hp? hp.at+hp.dur*60000 : lc.at+(lc.dur||10)*60000; cd.textContent='termina en '+mmss(end-now); }
   if(view==='tv'){ const panes=['board','movers','index','sectors']; const rot=(CFG.settings.tvRotateSec||20)*1000; const i=Math.floor(now/rot)%panes.length; document.documentElement.dataset.view=panes[i]; $('#tvdots').querySelectorAll('i').forEach((d,j)=>d.classList.toggle('on',j===i)); }
 }
+let qrFor='', qrOn=false;
+function pageUrl(){ const u=(CFG.settings&&CFG.settings.qrUrl)||''; if(u) return u; try{ return location.origin+location.pathname; }catch(e){ return ''; } }
+function updateQr(now){
+  const p=$('#qrpanel'); if(!p) return; const s=CFG.settings||{};
+  const per=(+s.qrEveryMin||0)*60, show=+s.qrShowSec||20; const url=pageUrl();
+  const want= view==='tv' && per>0 && !!url && typeof qrcode==='function' && ((Math.floor(now/1000)+90)%per)<show && $('#overlay').hidden;
+  if(want && qrFor!==url){ try{ const q=qrcode(0,'M'); q.addData(url); q.make(); p.innerHTML=`<div class="qr">${q.createSvgTag({cellSize:4,margin:0,scalable:true})}</div><div class="txt"><div class="big">Sigue la bolsa desde tu teléfono</div><div class="url">${esc(url.replace(/^https?:\/\//,''))}</div><div class="hint">Escanea el código · marca tus tragos con \u2605 para recibir avisos</div></div>`; qrFor=url; }catch(e){ return; } }
+  if(want!==qrOn){ qrOn=want; p.classList.toggle('on',want); p.setAttribute('aria-hidden',String(!want)); }
+}
 function updateOverlay(now){
   const ov=$('#overlay'); let key='', html='', snd='';
   for(const e of (CFG.events||[])){ if(now>=e.at && now<e.at+9000){ key='ev'+e.type+e.at; snd='event';
@@ -776,6 +802,7 @@ function updateOverlay(now){
     break; } }
   if(!key && view==='tv' && sim.traders.length){ const per=(CFG.settings.rankingEveryMin||10)*60, show=CFG.settings.rankingShowSec||15; const s=Math.floor(now/1000); if(per>0 && (s%per)<show && sim.k>0){ const n=Math.floor(s/per); const c=RANK_CRITERIA[n%RANK_CRITERIA.length]; key='rank'+n; snd='chime'; html=`<div class="eyebrow">Ranking de traders · ${esc(c.label)} · ${hhmm(now)}</div><div class="big" style="font-size:clamp(2rem,5vw,4rem)">${esc(c.sub)}</div><div class="rank"><ol>${rankHtml(c)}</ol></div>`; } }
   if(key!==lastOverlayKey){ lastOverlayKey=key; if(key){ ov.innerHTML=`<div class="box">${html}</div>`; ov.hidden=false; sfx(snd); } else { ov.hidden=true; ov.innerHTML=''; } }
+  updateQr(now);
 }
 
 /* ---------- backend (Apps Script) ---------- */
@@ -783,7 +810,7 @@ let backendRev=null, backendOk=false, adminPw='', pendingPw='';
 function usingBackend(){ return !!BACKEND_URL; }
 async function backendFetch(){ const u=BACKEND_URL+(BACKEND_URL.includes('?')?'&':'?')+'rev='+(backendRev==null?-1:backendRev)+'&_='+Date.now(); const r=await fetch(u,{cache:'no-store'}); if(!r.ok) throw new Error('http '+r.status); return r.json(); }
 function applyRemote(cfg){
-  const prevMove=(CFG.settings&&CFG.settings.moveSec)||15; CFG=cfg; backendRev=cfg.rev; LOCAL_ONLY=false;
+  const prevMove=(CFG.settings&&CFG.settings.moveSec)||15; CFG=withDefaults(cfg); backendRev=cfg.rev; LOCAL_ONLY=false;
   if(((cfg.settings&&cfg.settings.moveSec)||15)!==prevMove){ try{ sessionStorage.setItem('hdx-view',view); }catch(e){} try{ location.reload(); }catch(e){} return; }
   sim=newSim(CFG); boardSig=''; lastRenderedK=-2; nextT='';
   if(view==='admin'){ if(!draft || !dirty()){ draft=null; if(unlocked) renderAdmin(); } else toast('Hay una configuración nueva publicada por otra persona. Tus cambios sin publicar se mantienen.','',6000); }
@@ -873,8 +900,11 @@ function renderAdmin(){
       <label>Activos en primera rueda<input type="number" id="t1n" value="${s.tier1}" min="2" max="12"></label>
       <label>Activos en segunda rueda<input type="number" id="t2n" value="${s.tier2}" min="0" max="20"></label>
       <label>Cada producto cambia como máximo cada (min)<input type="number" id="productMin" value="${s.productMin||4}" min="0.5" max="30" step="0.5"></label>
+      <label>QR en TV: cada (min, 0 = nunca)<input type="number" id="qrEvery" value="${s.qrEveryMin==null?3:s.qrEveryMin}" min="0" max="120"></label>
+      <label>QR en TV: mostrar (seg)<input type="number" id="qrShow" value="${s.qrShowSec||20}" min="5" max="120"></label>
+      <label>URL del QR (vacío = esta misma página)<input id="qrUrl" value="${esc(s.qrUrl||'')}" placeholder="https://hdx.haulmer.com"></label>
       <label>Saldo inicial por persona (solo campana de apertura)<input type="number" id="bal" value="${s.balance}" step="500"></label>
-    </div><p class="note">Los productos se evalúan por turnos: con ${draft.products.filter(p=>!p.hidden).length} activos y ${s.productMin||4} min por producto, la pantalla muestra una evaluación cada ${deriveMoveSec(draft)} segundos. Cambiar este ritmo recalcula toda la noche (la historia cambia). Cada evaluación mueve el precio hasta $100. En TV el ranking rota de criterio en cada aparición: más barato, más tragos, más gastado, más caro, más transferencias.</p></div>
+    </div><p class="note">El QR aparece por el costado derecho de la TV durante los segundos indicados y apunta a esta página o a la URL que definas. Los productos se evalúan por turnos: con ${draft.products.filter(p=>!p.hidden).length} activos y ${s.productMin||4} min por producto, la pantalla muestra una evaluación cada ${deriveMoveSec(draft)} segundos. Cambiar este ritmo recalcula toda la noche (la historia cambia). Cada evaluación mueve el precio hasta $100. En TV el ranking rota de criterio en cada aparición: más barato, más tragos, más gastado, más caro, más transferencias.</p></div>
 
     <div class="card"><h2>Seguridad</h2><div class="grid">
       <label>Nueva contraseña (frase larga)<input type="password" id="np1" autocomplete="new-password"></label>
@@ -891,7 +921,7 @@ function renderAdmin(){
   onInput('hours',el=>draft.sessionHours=+el.value||8); onInput('seed',el=>draft.seed=+el.value||1);
   onInput('hpct',el=>draft.settings.happyPct=+el.value||30); onInput('ramt',el=>draft.settings.refillAmount=+el.value||2000);
   onInput('rot',el=>draft.settings.tvRotateSec=+el.value||20); onInput('rkEvery',el=>draft.settings.rankingEveryMin=+el.value||10); onInput('rkShow',el=>draft.settings.rankingShowSec=+el.value||15);
-  onInput('t1n',el=>draft.settings.tier1=+el.value||8); onInput('t2n',el=>draft.settings.tier2=+el.value||8); onInput('bal',el=>draft.settings.balance=+el.value||5000); onInput('productMin',el=>{ draft.settings.productMin=Math.max(0.5,Math.min(30,+el.value||4)); draft.settings.moveSec=deriveMoveSec(draft); });
+  onInput('t1n',el=>draft.settings.tier1=+el.value||8); onInput('t2n',el=>draft.settings.tier2=+el.value||8); onInput('bal',el=>draft.settings.balance=+el.value||5000); onInput('qrEvery',el=>draft.settings.qrEveryMin=Math.max(0,+el.value||0)); onInput('qrShow',el=>draft.settings.qrShowSec=Math.max(5,+el.value||20)); onInput('qrUrl',el=>draft.settings.qrUrl=el.value.trim()); onInput('productMin',el=>{ draft.settings.productMin=Math.max(0.5,Math.min(30,+el.value||4)); draft.settings.moveSec=deriveMoveSec(draft); });
   onInput('heads',el=>draft.headlines=el.value.split('\n').map(x=>x.trim()).filter(Boolean));
   $('#ptable').addEventListener('input',e=>{ const el=e.target; if(el.dataset.i==null) return; const p=draft.products[+el.dataset.i]; const k=el.dataset.k; if(k==='hidden') p.hidden=el.checked; else if(k==='pinned'){ p.pinned=el.checked; } else if(['base','stock','pop'].includes(k)) p[k]=+el.value||0; else p[k]= k==='t'? el.value.toUpperCase().trim() : el.value; upd(); });
   $('#ptable').addEventListener('click',e=>{ const d=e.target.closest('[data-del]'); const im=e.target.closest('[data-imp]'); if(d){ draft.products.splice(+d.dataset.del,1); renderAdmin(); } if(im){ const p=draft.products[+im.dataset.imp]; draft.impulses=(draft.impulses||[]).concat([{t:p.t,at:Date.now()+TICK,qty:8}]); toast(`+8 ventas de ${p.name} al publicar`); upd(); } });
