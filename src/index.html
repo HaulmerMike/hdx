@@ -17,7 +17,9 @@
   font-size:15px;
 }
 html.tv{ font-size:clamp(14px,1.05vw,24px); }
-html,body{ height:100%; }
+html{ height:100%; }
+body{ min-height:100%; }
+html.sheet-open, html.sheet-open body{ overflow:hidden; }
 body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--font-body);
   padding-left:max(16px,env(safe-area-inset-left,0px)); padding-right:max(16px,env(safe-area-inset-right,0px));
   padding-block:0 calc(6.5rem + env(safe-area-inset-bottom,0px)); font-variant-numeric:tabular-nums; -webkit-font-smoothing:antialiased; overflow-x:hidden; }
@@ -203,7 +205,7 @@ html.tv .trend{ font-size:1.2rem; }
 /* Sheet (detail / follow dialogs) */
 #sheet{ position:fixed; inset:0; z-index:55; display:flex; align-items:flex-end; justify-content:center; }
 #sheet .bg{ position:absolute; inset:0; background:rgba(11,11,13,.7); }
-#sheet .box{ position:relative; background:var(--card); border:1px solid var(--border); border-radius:18px 18px 0 0; width:min(100%,46rem); max-height:88vh; overflow:auto; padding:1.1rem 1.1rem calc(1.2rem + env(safe-area-inset-bottom,0px)); animation:slideUp .3s ease-out; }
+#sheet .box{ position:relative; background:var(--card); border:1px solid var(--border); border-radius:18px 18px 0 0; width:min(100%,46rem); max-height:88vh; overflow:auto; overscroll-behavior:contain; -webkit-overflow-scrolling:touch; padding:1.1rem 1.1rem calc(1.2rem + env(safe-area-inset-bottom,0px)); animation:slideUp .3s ease-out; }
 @keyframes slideUp{ from{ transform:translateY(30px); opacity:0 } to{ transform:none; opacity:1 } }
 @media (min-width:700px){ #sheet{ align-items:center; } #sheet .box{ border-radius:18px; padding-bottom:1.2rem; } }
 .sheet-head{ display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; }
@@ -707,8 +709,8 @@ function detailHtml(p){
 }
 function openDetail(t){ const p=sim.prods.find(x=>x.t===t); if(!p) return; showSheet(detailHtml(p),t); }
 function renderDetail(t){ const p=sim.prods.find(x=>x.t===t); if(!p) return; const box=$('#sheet .box'); if(!box) return; const sc=box.scrollTop; box.innerHTML=detailHtml(p); box.scrollTop=sc; }
-function showSheet(html,t){ const sh=$('#sheet'); sh.dataset.t=t||''; sh.innerHTML=`<div class="bg" data-close></div><div class="box" role="dialog" aria-modal="true">${html}</div>`; sh.hidden=false; }
-function closeSheet(){ const sh=$('#sheet'); sh.hidden=true; sh.innerHTML=''; sh.dataset.t=''; }
+function showSheet(html,t){ const sh=$('#sheet'); sh.dataset.t=t||''; sh.innerHTML=`<div class="bg" data-close></div><div class="box" role="dialog" aria-modal="true">${html}</div>`; sh.hidden=false; document.documentElement.classList.add('sheet-open'); }
+function closeSheet(){ const sh=$('#sheet'); sh.hidden=true; sh.innerHTML=''; sh.dataset.t=''; document.documentElement.classList.remove('sheet-open'); }
 $('#sheet').addEventListener('click',e=>{ if(e.target.closest('[data-close]')) closeSheet(); else { const f=e.target.closest('[data-fav]'); if(f) openFollow(f.dataset.fav); } });
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeSheet(); });
 
