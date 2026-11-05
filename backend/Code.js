@@ -28,7 +28,7 @@ const SECRET_DEFAULTS = {};
 function doGet(e) {
   const p = (e && e.parameter) || {};
   if (p.log) return json(readLog());
-  if (p.integrations) return json({ integrations: secretsStatus(), version: 8 });
+  if (p.integrations) return json({ integrations: secretsStatus(), version: 9 });
   const stored = readStored();
   const rev = Number(p.rev || -1);
   if (stored && stored.rev === rev) return json({ rev: rev, same: true });
@@ -98,7 +98,7 @@ function handleAction(body, password) {
         const now = new Date();
         const init = body.initDate || fmtLocal(new Date(now.getTime() - 24 * 3600000));
         const end = body.endDate || fmtLocal(now);
-        return json(Object.assign({ ok: true, initDate: init, endDate: end }, salesSummary(init, end, { raw: body.raw === true, catalog: body.catalog })));
+        return json(Object.assign({ ok: true, initDate: init, endDate: end }, salesSummary(init, end, { raw: body.raw === true, all: body.all === true, catalog: body.catalog })));
       }
       case 'pushPrices': {
         const list = Array.isArray(body.prices) ? body.prices : [];
@@ -241,7 +241,7 @@ function salesSummary(initDate, endDate, opts) {
   const target = opts.catalog ? String(opts.catalog) : s.CAT_RESOURCE;
   const catalogs = {};
   items.forEach(function (it) { const k = String((it && it.idCatalogue) || '(sin catálogo)'); catalogs[k] = (catalogs[k] || 0) + 1; });
-  const mine = items.filter(function (it) { return it && String(it.idCatalogue || '') === target; });
+  const mine = opts.all ? items.slice() : items.filter(function (it) { return it && String(it.idCatalogue || '') === target; });
   const by = {};
   mine.forEach(function (it) {
     const key = it.itemCode || ('#' + it.productId);
