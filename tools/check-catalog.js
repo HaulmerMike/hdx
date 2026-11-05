@@ -13,7 +13,7 @@ const wantRaw = process.argv.includes('--raw');
 // Estructura esperada (export del catálogo de producción "Haulmerland Barra").
 const EXPECTED = [
   ['PSCO', 'Pisco', 'Combinados'], ['WSKY', 'Whisky', 'Combinados'], ['GINT', 'Gin', 'Combinados'], ['FRNT', 'Fernet', 'Combinados'],
-  ['TGIN', 'Tropical Gin', 'Combinados'], ['RAMZ', 'Ramazzotti', 'Combinados'],
+  ['TGIN', 'Tropical Gin', 'Cócteles'], ['RAMZ', 'Ramazzotti', 'Cócteles'],
   ['CERV', 'Cerveza', 'Cervezas'], ['MICH', 'Michelada', 'Cervezas'],
   ['BEBD', 'Bebida', 'Sin alcohol'], ['JUGO', 'Jugo', 'Sin alcohol'], ['RBLL', 'Red Bull', 'Sin alcohol'], ['AGUA', 'Agua', 'Sin alcohol'],
   ['MOJT', 'Mojito', 'Cócteles'], ['SANG', 'Sangría', 'Cócteles'], ['APRL', 'Aperol Spritz', 'Cócteles'], ['MARG', 'Tequila Margarita', 'Cócteles'], ['CAIP', 'Caipirinha', 'Cócteles'],
