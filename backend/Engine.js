@@ -52,7 +52,7 @@ function engineInit(cfg, now) {
   });
   var avgBase = prods.length ? prods.reduce(function (a, p) { return a + p.base; }, 0) / prods.length : 300;
   return {
-    srev: 1, version: 1, mode: 'live', cfgRev: cfg.rev || 0, open: cfg.openAt, closeTick: Math.floor((cfg.sessionHours || 8) * 3600000 / C.TICK),
+    srev: 1, version: 1, mode: 'live', cfgRev: cfg.rev || 0, moveSec: (cfg.settings || {}).moveSec || 15, open: cfg.openAt, closeTick: Math.floor((cfg.sessionHours || 8) * 3600000 / C.TICK),
     k: -1, t: cfg.openAt, status: 'pre', startedAt: now, updatedAt: now, lastRunAt: null, lastRunMs: 0, runs: 0, lastError: '',
     prods: prods, idx: [], idxHi: 1000, idxLo: 1000, tiers: { t1: [], t2: [], t3: [] }, news: [], traders: [], totalVol: 0, avgBase: avgBase,
     sales: { seen: {}, counted: 0, unmatched: 0, lastFetch: null },
@@ -151,13 +151,13 @@ function engineStep(state, cfg, k, demandFn, C) {
 
 /** Cuando se publica una configuración nueva sin cambiar la apertura: toma productos nuevos/quitados y stock/pop/pin actualizados. */
 function engineSyncConfig(st, cfg) {
-  var C = engineConsts(cfg.settings);
+  var C = engineConsts({ moveSec: st.moveSec || (cfg.settings || {}).moveSec });
   var byT = {}; st.prods.forEach(function (p) { byT[p.t] = p; });
   var prods = []; var i = 0;
   (cfg.products || []).forEach(function (p) {
     if (p.hidden) return;
     var old = byT[p.t];
-    if (old) { old.i = i++; old.pop = p.pop || 1; old.pinned = !!(p.pinned || p.pin); old.catalogId = p.catalogId || null; if (p.stock !== old.stock0) { old.stock += (p.stock - old.stock0); old.stock0 = p.stock; if (old.stock > 0) old.suspended = false; } prods.push(old); }
+    if (old) { old.i = i++; old.base = p.base; old.pop = p.pop || 1; old.pinned = !!(p.pinned || p.pin); old.catalogId = p.catalogId || null; if (p.stock !== old.stock0) { old.stock += (p.stock - old.stock0); old.stock0 = p.stock; if (old.stock > 0) old.suspended = false; } prods.push(old); }
     else {
       var np = { t: p.t, i: i++, base: p.base, stock0: p.stock, stock: p.stock, pop: p.pop || 1, pinned: !!(p.pinned || p.pin), ipoAt: p.ipoAt || null, catalogId: p.catalogId || null,
         price: p.base, eff: p.base, mood: 1, W: 0, ring: [], vol: 0, hist: [], full: [], fullMin: -1, moves: [], suspended: false, active: !p.ipoAt, hi: p.base, lo: p.base, changedAt: -1, dir: 0, bigAt: -999, bigDir: 0, pct10: 0 };
@@ -167,6 +167,19 @@ function engineSyncConfig(st, cfg) {
   });
   st.prods = prods; st.cfgRev = cfg.rev || 0;
   st.closeTick = Math.floor((cfg.sessionHours || 8) * 3600000 / C.TICK);
+}
+
+/** Si cambió el ritmo (moveSec) con el motor andando: estado nuevo con el ritmo nuevo, conservando precio, stock y volumen de cada
+ *  producto y la memoria de ventas contadas; el historial parte de cero y el próximo tick a procesar es el actual. */
+function engineRestartKeepingPrices(cfg, old, now) {
+  var st = engineInit(cfg, now);
+  var byT = {}; (old.prods || []).forEach(function (p) { byT[p.t] = p; });
+  st.prods.forEach(function (p) { var o = byT[p.t]; if (!o) return; p.price = o.price; p.eff = o.eff; p.stock = o.stock; p.stock0 = o.stock0; p.vol = o.vol; p.hi = o.hi; p.lo = o.lo; p.suspended = o.suspended; p.active = o.active; p.mood = o.mood; });
+  st.totalVol = old.totalVol || 0; st.sales = old.sales || st.sales; st.pushed = old.pushed || {}; st.pushLog = old.pushLog || []; st.runs = old.runs || 0; st.startedAt = old.startedAt || now;
+  var C = engineConsts({ moveSec: st.moveSec });
+  var kNow = Math.floor((now - st.open) / C.TICK);
+  st.k = Math.max(-1, kNow - 1); st.t = st.open + Math.max(0, st.k) * C.TICK; st.srev = (old.srev || 0) + 1;
+  return st;
 }
 
 /** Agrupa las líneas de venta por tick y por ticker. lines: [{key, at(ms), t(ticker), qty}]. Devuelve {buckets, counted, dup}. */
@@ -190,7 +203,7 @@ function engineBucketSales(state, lines, kFrom, kTo, C) {
  * Devuelve un resumen; muta `state`.
  */
 function engineRunOnce(cfg, state, now, io) {
-  var C = engineConsts(cfg.settings); var started = Date.now();
+  var C = engineConsts({ moveSec: state.moveSec || (cfg.settings || {}).moveSec }); var started = Date.now();
   state.runs = (state.runs || 0) + 1; state.lastRunAt = now; state.lastError = '';
   var kNow = Math.floor((now - state.open) / C.TICK);
   var summary = { ticks: 0, sales: 0, pushed: 0, errors: [] };
@@ -240,5 +253,5 @@ function engineMapLine(line, index, cfg, parseDate) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { engineConsts: engineConsts, engineSyncConfig: engineSyncConfig, engineInit: engineInit, engineRunOnce: engineRunOnce, enginePublicState: enginePublicState, engineMapLine: engineMapLine, engineBucketSales: engineBucketSales };
+  module.exports = { engineConsts: engineConsts, engineSyncConfig: engineSyncConfig, engineRestartKeepingPrices: engineRestartKeepingPrices, engineInit: engineInit, engineRunOnce: engineRunOnce, enginePublicState: enginePublicState, engineMapLine: engineMapLine, engineBucketSales: engineBucketSales };
 }

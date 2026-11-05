@@ -161,6 +161,7 @@ function engineTick(force) {
     let st = readState();
     const now = Date.now();
     if (!st || st.open !== cfg.openAt) st = engineInit(cfg, now);
+    else if (st.moveSec !== ((cfg.settings || {}).moveSec || 15)) st = engineRestartKeepingPrices(cfg, st, now);
     if (st.cfgRev !== (cfg.rev || 0)) engineSyncConfig(st, cfg);
     const summary = engineRunOnce(cfg, st, now, {
       fetchLines: function (fromMs, toMs) { return fetchSalesLines(cfg, fromMs, toMs); },

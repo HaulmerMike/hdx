@@ -30,7 +30,7 @@ function fetchSalesLines(cfg, fromMs, toMs) { const seq = {}; return salesItems(
 function engineTick(force) {
   const cfg = stored; if (!cfg) return { skipped: 'sin configuración' };
   const mode = (cfg.settings || {}).mode || 'demo'; if (mode !== 'live' && !force) return { skipped: 'modo ' + mode };
-  const now = Date.now(); if (!state || state.open !== cfg.openAt) state = E.engineInit(cfg, now);
+  const now = Date.now(); if (!state || state.open !== cfg.openAt) state = E.engineInit(cfg, now); else if (state.moveSec !== ((cfg.settings || {}).moveSec || 15)) state = E.engineRestartKeepingPrices(cfg, state, now);
   if (state.cfgRev !== (cfg.rev || 0)) E.engineSyncConfig(state, cfg);
   const summary = E.engineRunOnce(cfg, state, now, { fetchLines: (a, b) => fetchSalesLines(cfg, a, b), pushPrice: (id, price) => { const c = CAT.find(x => x.id === id); if (!c) return { ok: false, error: 'no existe' }; c.price = price; pushed.push({ at: now, id, price }); return { ok: true }; } });
   console.log(new Date().toLocaleTimeString(), 'engineTick', JSON.stringify(summary), 'k', state.k, 'srev', state.srev);
