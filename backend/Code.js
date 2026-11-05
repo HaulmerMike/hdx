@@ -28,7 +28,7 @@ const SECRET_DEFAULTS = {};
 function doGet(e) {
   const p = (e && e.parameter) || {};
   if (p.log) return json(readLog());
-  if (p.integrations) return json({ integrations: secretsStatus(), version: 5 });
+  if (p.integrations) return json({ integrations: secretsStatus(), version: 6 });
   const stored = readStored();
   const rev = Number(p.rev || -1);
   if (stored && stored.rev === rev) return json({ rev: rev, same: true });
@@ -176,8 +176,10 @@ function catalogProducts(opts) {
     const block = payload.data || {};
     (block.products || []).forEach(function (p) {
       if (opts.raw) { out.push(p); return; }
+      // El gateway marca el SKU con typeName "SKU" (codeType 20); codeType 10 es el código de barras.
       let sku = '';
-      (p.codes || []).forEach(function (c) { if (Number(c.codeType) === 10 && !sku) sku = c.value || ''; });
+      (p.codes || []).forEach(function (c) { if (!sku && String(c.typeName || '').toUpperCase() === 'SKU') sku = String(c.value || '').trim(); });
+      if (!sku) (p.codes || []).forEach(function (c) { if (!sku && Number(c.codeType) === 20) sku = String(c.value || '').trim(); });
       const categories = (p.tags || []).filter(function (t) { return Number(t.tagType) === 10; }).map(function (t) { return String(t.name || '').trim(); }).filter(Boolean);
       const row = { id: p.id, name: p.name || '', price: Number(p.price) || 0, sku: sku, categories: categories,
         active: p.active === true || p.active === 1, hasVariants: !!p.hasVariants };
