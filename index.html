@@ -823,6 +823,32 @@ async function backendPoll(){
   const pill=$('#pubstate'); if(pill){ pill.className='pill '+(backendOk?'ok':'warn'); pill.textContent= backendOk?'compartida (servidor)':'servidor sin respuesta'; }
 }
 
+/* ---------- backend actions (catálogo, ventas, precios, secretos) ---------- */
+async function backendAction(action, payload){
+  if(!usingBackend()) throw Object.assign(new Error('Esta página no tiene backend configurado.'),{code:'nobackend'});
+  if(!adminPw){ toast('Vuelve a ingresar la contraseña.'); unlocked=false; renderGate(); throw Object.assign(new Error('pw'),{code:'pw'}); }
+  const r=await fetch(BACKEND_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(Object.assign({password:adminPw,action:action},payload||{}))});
+  const d=await r.json();
+  if(!d||!d.ok){ const err=(d&&d.error)||'error'; if(err==='auth'){ adminPw=''; unlocked=false; renderGate(); } throw Object.assign(new Error(err),{code:err}); }
+  return d;
+}
+function tickerFrom(p, used){ let t=String(p.sku||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,4); if(!t){ t=String(p.name||'').toUpperCase().replace(/[^A-Z]/g,'').slice(0,4)||'PROD'; } let base=t, i=2; while(used.has(t)){ t=(base.slice(0,3)+i).slice(0,4); i++; } used.add(t); return t; }
+/* Mezcla los productos del catálogo real con la lista del borrador: conserva base, stock y pin de los tickers que ya existían. */
+function mergeCatalog(list){
+  const prev=new Map((draft.products||[]).map(p=>[p.t,p])); const byId=new Map((draft.products||[]).filter(p=>p.catalogId).map(p=>[String(p.catalogId),p]));
+  const used=new Set(); const out=[]; let nuevos=0, iguales=0;
+  for(const c of list){
+    const old= byId.get(String(c.id)) || prev.get(String(c.sku||'').toUpperCase());
+    const t= old? old.t : tickerFrom(c, used); used.add(t);
+    const inRange= c.price>=PMIN && c.price<=PMAX && c.price%STEP===0;
+    out.push({ t, name:c.name, sector:(c.categories&&c.categories[0])||'Otros', base: old? old.base : (inRange? c.price : 300), stock: old? old.stock : 100, pop: old? old.pop : 1, pin: old? (old.pin||'') : '', pinned: old? !!old.pinned : false, hidden: !c.active || (old? !!old.hidden : false), catalogId:c.id, catalogPrice:c.price, hasVariants:!!c.hasVariants });
+    if(old) iguales++; else nuevos++;
+  }
+  const quitados=(draft.products||[]).filter(p=>!out.some(o=>o.t===p.t)).map(p=>p.t);
+  out.sort((a,b)=>a.sector.localeCompare(b.sector)||a.name.localeCompare(b.name));
+  draft.products=out; return {nuevos, iguales, quitados};
+}
+
 /* ---------- main loop ---------- */
 let shellBuilt=false;
 function tick(){
@@ -850,7 +876,7 @@ function renderAdmin(){
   draft=draft||JSON.parse(JSON.stringify(CFG)); const s=draft.settings; const now=Date.now(); const info=marketInfo(now);
   document.documentElement.classList.remove('tv');
   const openTxt= info.status==='pre'?`abre a las ${hhmm(draft.openAt)}`: info.status==='closed'?'cerrado':`abierto desde las ${hhmm(draft.openAt)} (cierra ${hhmm(draft.openAt+draft.sessionHours*3600000)})`;
-  const prodRows=draft.products.map((p,i)=>`<tr><td><input class="name" data-i="${i}" data-k="t" value="${esc(p.t)}" maxlength="4" style="width:4.5rem;text-transform:uppercase"></td><td><input class="name" data-i="${i}" data-k="name" value="${esc(p.name)}"></td><td><input class="name" data-i="${i}" data-k="sector" value="${esc(p.sector)}" style="width:7rem"></td><td><input type="number" data-i="${i}" data-k="base" value="${p.base}" step="50" min="100" max="500"></td><td><input type="number" data-i="${i}" data-k="stock" value="${p.stock}" min="0"></td><td><input type="number" data-i="${i}" data-k="pop" value="${p.pop}" step="0.1" min="0.1" max="3"></td><td style="text-align:center"><input type="checkbox" data-i="${i}" data-k="pinned" ${p.pinned||p.pin?'checked':''} style="width:auto"></td><td><input class="pin" data-i="${i}" data-k="pin" value="${esc(p.pin||'')}" placeholder="Ej. Trago de la casa"></td><td style="text-align:center"><input type="checkbox" data-i="${i}" data-k="hidden" ${p.hidden?'checked':''} style="width:auto"></td><td><div class="evbtns"><button class="btn ghost" data-imp="${i}" title="Inyecta 8 ventas ahora">+8 ventas</button><button class="btn danger" data-del="${i}">Quitar</button></div></td></tr>`).join('');
+  const prodRows=draft.products.map((p,i)=>`<tr><td><input class="name" data-i="${i}" data-k="t" value="${esc(p.t)}" maxlength="4" style="width:4.5rem;text-transform:uppercase"></td><td class="note" title="${p.catalogId?'Producto #'+p.catalogId+' del catálogo · precio actual '+money(p.catalogPrice||0):'No viene del catálogo'}">${p.catalogId?'#'+p.catalogId:'—'}</td><td><input class="name" data-i="${i}" data-k="name" value="${esc(p.name)}"></td><td><input class="name" data-i="${i}" data-k="sector" value="${esc(p.sector)}" style="width:7rem"></td><td><input type="number" data-i="${i}" data-k="base" value="${p.base}" step="50" min="100" max="500"></td><td><input type="number" data-i="${i}" data-k="stock" value="${p.stock}" min="0"></td><td><input type="number" data-i="${i}" data-k="pop" value="${p.pop}" step="0.1" min="0.1" max="3"></td><td style="text-align:center"><input type="checkbox" data-i="${i}" data-k="pinned" ${p.pinned||p.pin?'checked':''} style="width:auto"></td><td><input class="pin" data-i="${i}" data-k="pin" value="${esc(p.pin||'')}" placeholder="Ej. Trago de la casa"></td><td style="text-align:center"><input type="checkbox" data-i="${i}" data-k="hidden" ${p.hidden?'checked':''} style="width:auto"></td><td><div class="evbtns"><button class="btn ghost" data-imp="${i}" title="Inyecta 8 ventas ahora">+8 ventas</button><button class="btn danger" data-del="${i}">Quitar</button></div></td></tr>`).join('');
   app.innerHTML=`<div class="admin">
     <div class="statusbar"><div class="msg"><b>Mesa de control HDX</b> · Mercado ${openTxt} · Publicación: <span class="pill ${usingBackend()?(backendOk?'ok':'warn'):LOCAL_ONLY?'warn':'ok'}" id="pubstate">${usingBackend()?(backendOk?'compartida (servidor)':'servidor sin respuesta'):LOCAL_ONLY?'solo este navegador':'compartida'}</span></div>
       <button class="btn ghost" id="discard">Descartar cambios</button><button class="btn primary" id="publish">Publicar cambios</button><a class="btn ghost" href="#" id="toboard">Ver tablero</a><button class="btn ghost" id="theme">${theme==='light'?'\u263E Noche':'\u2600\uFE0E Día'}</button></div>
@@ -887,7 +913,7 @@ function renderAdmin(){
     </div>
     <div style="margin-top:.8rem"><span class="eyebrow">Eventos programados</span><ul id="evlist" class="note" style="margin:.4rem 0 0;padding-left:1.1rem">${(draft.events||[]).slice().reverse().slice(0,8).map(e=>`<li>${hhmm(e.at)} · ${e.type==='happy'?`Happy Hour ${e.dur} min`:e.type==='refill'?`Refill ${money(e.amount)}`:e.type==='last'?`Último llamado ${e.dur} min`:e.type==='ipo'?`IPO ${e.t}`:'Apertura'}</li>`).join('')||'<li>Sin eventos</li>'}</ul></div></div>
 
-    <div class="card"><h2>Productos</h2><div class="tblwrap"><table class="tbl" id="ptable"><thead><tr><th>Ticker</th><th>Nombre</th><th>Sector</th><th>Base $</th><th>Stock</th><th>Demanda</th><th>Pin</th><th>Motivo del pin (opcional)</th><th>Oculto</th><th></th></tr></thead><tbody>${prodRows}</tbody></table></div>
+    <div class="card"><h2>Productos</h2><div class="tblwrap"><table class="tbl" id="ptable"><thead><tr><th>Ticker</th><th>Cat.</th><th>Nombre</th><th>Sector</th><th>Base $</th><th>Stock</th><th>Demanda</th><th>Pin</th><th>Motivo del pin (opcional)</th><th>Oculto</th><th></th></tr></thead><tbody>${prodRows}</tbody></table></div>
       <div class="evbtns" style="margin-top:.8rem"><button class="btn ghost" id="addProd">+ Agregar producto</button></div>
       <p class="note">Demanda es el multiplicador base de ventas (1 = normal). Un producto con pin aparece siempre primero; el motivo es opcional y se muestra junto al pin. "+8 ventas" inyecta demanda para probar cómo reacciona el precio.</p></div>
 
@@ -905,6 +931,27 @@ function renderAdmin(){
       <label>URL del QR (vacío = esta misma página)<input id="qrUrl" value="${esc(s.qrUrl||'')}" placeholder="https://hdx.haulmer.com"></label>
       <label>Saldo inicial por persona (solo campana de apertura)<input type="number" id="bal" value="${s.balance}" step="500"></label>
     </div><p class="note">El QR aparece por el costado derecho de la TV durante los segundos indicados y apunta a esta página o a la URL que definas. Los productos se evalúan por turnos: con ${draft.products.filter(p=>!p.hidden).length} activos y ${s.productMin||4} min por producto, la pantalla muestra una evaluación cada ${deriveMoveSec(draft)} segundos. Cambiar este ritmo recalcula toda la noche (la historia cambia). Cada evaluación mueve el precio hasta $100. En TV el ranking rota de criterio en cada aparición: más barato, más tragos, más gastado, más caro, más transferencias.</p></div>
+
+    <div class="card" id="integ"><h2>Integraciones con el catálogo y las ventas</h2>
+      <p class="note">Las claves se guardan en el servidor y nunca vuelven a la página. Deja vacío lo que no quieras cambiar. Estado: <span id="integStatus">consultando…</span></p>
+      <div class="grid">
+        <label>Catálogo: URL del gateway<input id="sCAT_BASE_URL" placeholder="https://devhaulmer.azure-api.net/external/v2/catalogue"></label>
+        <label>Catálogo: clave (apikey)<input id="sCAT_API_KEY" type="password" autocomplete="off" placeholder="sin cambios"></label>
+        <label>Catálogo: identificador (uuid)<input id="sCAT_RESOURCE" placeholder="uuid del catálogo"></label>
+        <label>Ventas: URL base<input id="sSALES_BASE_URL" placeholder="https://api.haulmer.dev/v3/sales"></label>
+        <label>Ventas: clave (X-API-Key)<input id="sSALES_API_KEY" type="password" autocomplete="off" placeholder="sin cambios"></label>
+        <label>Ventas: RUT del comercio<input id="sSALES_TAX_ID" placeholder="76264675"></label>
+        <button class="btn" id="saveSecrets">Guardar en el servidor</button>
+      </div>
+      <div class="evbtns" style="margin-top:.8rem">
+        <button class="btn ghost" id="testCatalog">Probar catálogo</button>
+        <button class="btn" id="importCatalog">Importar productos del catálogo</button>
+        <button class="btn ghost" id="testSales">Probar ventas (24 h)</button>
+        <button class="btn" id="pushBase">Enviar precios de apertura al catálogo</button>
+      </div>
+      <div id="integOut" class="note" style="margin-top:.8rem"></div>
+      <p class="note">Importar reemplaza la lista de productos por la del catálogo (ticker = SKU, sector = primera categoría) conservando precio base, stock y pin de los que ya existían; luego hay que publicar. "Enviar precios de apertura" escribe en el catálogo el precio base publicado de cada producto.</p>
+    </div>
 
     <div class="card"><h2>Seguridad</h2><div class="grid">
       <label>Nueva contraseña (frase larga)<input type="password" id="np1" autocomplete="new-password"></label>
@@ -940,6 +987,17 @@ function renderAdmin(){
   bind('discard',()=>{ draft=null; renderAdmin(); });
   bind('toboard',()=>{ view=''; try{ sessionStorage.setItem('hdx-view',''); }catch(e){} shellBuilt=false; boardSig=''; lastRenderedK=-2; start(); });
   bind('publish',publishDraft);
+  /* integraciones */
+  const integOut=(html)=>{ const o=$('#integOut'); if(o) o.innerHTML=html; };
+  const integStatus=async()=>{ const el=$('#integStatus'); if(!el) return; if(!usingBackend()){ el.textContent='esta página no tiene backend'; return; } try{ const r=await fetch(BACKEND_URL+(BACKEND_URL.includes('?')?'&':'?')+'integrations=1&_='+Date.now(),{cache:'no-store'}); const d=await r.json(); if(!d||!d.integrations){ el.textContent='el servidor aún no tiene la versión con integraciones'; return; } const s=d.integrations; const falt=['CAT_API_KEY','CAT_RESOURCE','SALES_API_KEY'].filter(k=>!s[k]); el.textContent= falt.length? 'faltan '+falt.join(', ') : 'catálogo '+s.CAT_RESOURCE+' · clave '+s.CAT_API_KEY+' · ventas RUT '+s.SALES_TAX_ID+' · clave '+s.SALES_API_KEY; ['CAT_BASE_URL','CAT_RESOURCE','SALES_BASE_URL','SALES_TAX_ID'].forEach(k=>{ const i=$('#s'+k); if(i && !i.value) i.placeholder=s[k]||i.placeholder; }); }catch(e){ el.textContent='sin respuesta del servidor'; } };
+  integStatus();
+  const busy=(id,on)=>{ const b=$('#'+id); if(b){ b.disabled=on; } };
+  bind('saveSecrets',async()=>{ const secrets={}; ['CAT_BASE_URL','CAT_API_KEY','CAT_RESOURCE','SALES_BASE_URL','SALES_API_KEY','SALES_TAX_ID'].forEach(k=>{ const v=($('#s'+k)||{}).value; if(v&&v.trim()) secrets[k]=v.trim(); }); if(!Object.keys(secrets).length){ toast('No hay valores nuevos que guardar'); return; } busy('saveSecrets',true); try{ await backendAction('secrets',{secrets}); ['CAT_API_KEY','SALES_API_KEY'].forEach(k=>{ const i=$('#s'+k); if(i) i.value=''; }); toast('Guardado en el servidor'); integStatus(); }catch(e){ toast('No se pudo guardar: '+e.message,'',6000); } busy('saveSecrets',false); });
+  const catalogTable=(list)=>`<div class="tblwrap"><table class="tbl"><thead><tr><th>SKU</th><th>Nombre</th><th class="num">Precio</th><th>Categorías</th><th>Id</th><th>Activo</th><th>Variantes</th></tr></thead><tbody>${list.map(c=>`<tr><td>${esc(c.sku||'—')}</td><td>${esc(c.name)}</td><td class="num">${money(c.price)}</td><td>${esc((c.categories||[]).join(', '))}</td><td>${c.id}</td><td>${c.active?'sí':'no'}</td><td>${c.hasVariants?'sí':'—'}</td></tr>`).join('')}</tbody></table></div>`;
+  bind('testCatalog',async()=>{ busy('testCatalog',true); integOut('Consultando el catálogo…'); try{ const d=await backendAction('catalog'); integOut(`<b style="color:var(--text)">${d.products.length} productos</b> en el catálogo ${esc(d.resource)}${catalogTable(d.products)}`); }catch(e){ integOut('Error: '+esc(e.message)); } busy('testCatalog',false); });
+  bind('importCatalog',async()=>{ busy('importCatalog',true); integOut('Importando…'); try{ const d=await backendAction('catalog'); const r=mergeCatalog(d.products); toast(`Importados ${d.products.length} productos: ${r.nuevos} nuevos, ${r.iguales} ya existían${r.quitados.length?', quitados '+r.quitados.join(', '):''}. Revisa precios base y publica.`,'',8000); renderAdmin(); }catch(e){ integOut('Error: '+esc(e.message)); busy('importCatalog',false); } });
+  bind('testSales',async()=>{ busy('testSales',true); integOut('Consultando ventas…'); try{ const d=await backendAction('sales'); integOut(`<b style="color:var(--text)">${d.matched} ítems de este catálogo</b> entre ${esc(d.initDate)} y ${esc(d.endDate)} (${d.total} en total en el comercio)${d.bySku.length?`<div class="tblwrap"><table class="tbl"><thead><tr><th>SKU</th><th>Nombre</th><th class="num">Unidades</th><th class="num">Total</th><th>Última venta</th></tr></thead><tbody>${d.bySku.map(s=>`<tr><td>${esc(s.sku)}</td><td>${esc(s.name)}</td><td class="num">${s.qty}</td><td class="num">${money(s.total)}</td><td>${esc(s.last)}</td></tr>`).join('')}</tbody></table></div>`:''}`); }catch(e){ integOut('Error: '+esc(e.message)); } busy('testSales',false); });
+  bind('pushBase',async()=>{ if(dirty()){ toast('Publica primero los cambios: se envían los precios base publicados.','',6000); return; } const prices=(CFG.products||[]).filter(p=>p.catalogId&&!p.hidden).map(p=>({productId:p.catalogId, price:p.base, t:p.t})); if(!prices.length){ toast('Ningún producto tiene id de catálogo. Importa el catálogo primero.','',6000); return; } busy('pushBase',true); integOut('Enviando '+prices.length+' precios…'); try{ const d=await backendAction('pushPrices',{prices}); const ok=d.results.filter(r=>r.ok).length; integOut(`<b style="color:var(--text)">${ok} de ${d.results.length} precios actualizados en el catálogo.</b>${d.results.filter(r=>!r.ok).map(r=>'<div>#'+r.productId+': '+esc(r.error)+'</div>').join('')}`); }catch(e){ integOut('Error: '+esc(e.message)); } busy('pushBase',false); });
   bind('theme',()=>{ theme= theme==='light'?'dark':'light'; try{ localStorage.setItem('hdx-theme',theme); }catch(e){} applyTheme(); });
   upd();
 }
