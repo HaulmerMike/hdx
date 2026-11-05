@@ -880,7 +880,7 @@ function tick(){
 
 /* ---------- admin ---------- */
 async function sha256(s){ const b=new TextEncoder().encode(s); const h=await crypto.subtle.digest('SHA-256',b); return [...new Uint8Array(h)].map(x=>x.toString(16).padStart(2,'0')).join(''); }
-let draft=null, unlocked=false; try{ unlocked=sessionStorage.getItem('hdx-admin')==='1'; }catch(e){}
+let draft=null, draftRev=null, unlocked=false; try{ unlocked=sessionStorage.getItem('hdx-admin')==='1'; }catch(e){}
 function toast(msg,kind,ms){ let t=$('.toast'); if(!t){ t=document.createElement('div'); t.className='toast'; document.body.appendChild(t); } t.className='toast '+(kind||''); t.textContent=msg; clearTimeout(t._to); t._to=setTimeout(()=>t.remove(),ms||3500); }
 function renderGate(err){ document.documentElement.classList.remove('tv'); app.innerHTML=`<div class="admin"><div class="gate card"><span class="eyebrow">HDX · Mesa de control</span><h1>Acceso restringido</h1><p class="note">Ingresa la contraseña de la organización. La página solo guarda un hash; la contraseña nunca viaja en el código.</p><label>Contraseña<input id="pw" type="password" autocomplete="current-password"></label><div class="err" id="err">${esc(err||'')}</div><button class="btn primary" id="enter">Entrar</button><p class="note">Sin contraseña: vuelve al tablero quitando <code>#admin</code> del enlace.</p></div></div>`;
   const go=async()=>{ const v=$('#pw').value; if(!window.crypto||!crypto.subtle){ $('#err').textContent='Este navegador no permite verificar la contraseña (se requiere HTTPS).'; return; } const h=await sha256(v); if(h===CFG.adminHash){ unlocked=true; adminPw=v; try{ sessionStorage.setItem('hdx-admin','1'); }catch(e){} renderAdmin(); } else { $('#err').textContent='Contraseña incorrecta.'; } };
@@ -889,7 +889,7 @@ function renderGate(err){ document.documentElement.classList.remove('tv'); app.i
 function deriveMoveSec(c){ const n=Math.max(1,c.products.filter(p=>!p.hidden).length); return Math.max(3,Math.min(120,Math.round((c.settings.productMin||4)*60/n))); }
 function dirty(){ return JSON.stringify(draft)!==JSON.stringify(CFG); }
 function renderAdmin(){
-  draft=draft||JSON.parse(JSON.stringify(CFG)); const s=draft.settings; const now=Date.now(); const info=marketInfo(now);
+  if(!draft){ draft=JSON.parse(JSON.stringify(CFG)); draftRev=CFG.rev||0; } const s=draft.settings; const now=Date.now(); const info=marketInfo(now);
   document.documentElement.classList.remove('tv');
   const openTxt= info.status==='pre'?`abre a las ${hhmm(draft.openAt)}`: info.status==='closed'?'cerrado':`abierto desde las ${hhmm(draft.openAt)} (cierra ${hhmm(draft.openAt+draft.sessionHours*3600000)})`;
   const prodRows=draft.products.map((p,i)=>`<tr><td><input class="name" data-i="${i}" data-k="t" value="${esc(p.t)}" maxlength="4" style="width:4.5rem;text-transform:uppercase"></td><td class="note" title="${p.catalogId?'Producto #'+p.catalogId+' del catálogo · precio actual '+money(p.catalogPrice||0):'No viene del catálogo'}">${p.catalogId?'#'+p.catalogId:'—'}</td><td><input class="name" data-i="${i}" data-k="name" value="${esc(p.name)}"></td><td><input class="name" data-i="${i}" data-k="sector" value="${esc(p.sector)}" style="width:7rem"></td><td><input type="number" data-i="${i}" data-k="base" value="${p.base}" step="50" min="100" max="500"></td><td style="text-align:center"><input type="checkbox" data-i="${i}" data-k="fixed" ${p.fixed?'checked':''} style="width:auto"></td><td><input type="number" data-i="${i}" data-k="stock" value="${p.stock}" min="0"></td><td><input type="number" data-i="${i}" data-k="pop" value="${p.pop}" step="0.1" min="0.1" max="10"></td><td style="text-align:center"><input type="checkbox" data-i="${i}" data-k="pinned" ${p.pinned||p.pin?'checked':''} style="width:auto"></td><td><input class="pin" data-i="${i}" data-k="pin" value="${esc(p.pin||'')}" placeholder="Ej. Trago de la casa"></td><td style="text-align:center"><input type="checkbox" data-i="${i}" data-k="hidden" ${p.hidden?'checked':''} style="width:auto"></td><td><div class="evbtns"><button class="btn ghost" data-imp="${i}" title="Inyecta 8 ventas ahora">+8 ventas</button><button class="btn danger" data-del="${i}">Quitar</button></div></td></tr>`).join('');
@@ -911,9 +911,9 @@ function renderAdmin(){
       <label>Ventas por escalón de $50<input type="number" id="perStep" value="${s.salesPerStep==null?2.5:s.salesPerStep}" min="0.5" max="100" step="0.5"></label>
       <label style="flex-direction:row;align-items:center;gap:.5rem"><input type="checkbox" id="pushCat" ${s.pushToCatalog===false?'':'checked'} style="width:auto">Enviar cada cambio de precio al catálogo</label>
     </div>
-    <div class="evbtns" style="margin-top:.8rem"><button class="btn" id="engStart">▶ Iniciar motor (reinicia precios)</button><button class="btn danger" id="engStop">■ Detener motor</button><button class="btn ghost" id="engRun">Correr una vez ahora</button><button class="btn ghost" id="engRefresh">Actualizar estado</button></div>
+    <div class="evbtns" style="margin-top:.8rem"><button class="btn" id="engStart">▶ Iniciar motor (reinicia precios)</button><button class="btn ghost" id="engResume">Reanudar sin reiniciar</button><button class="btn danger" id="engStop">■ Detener motor</button><button class="btn ghost" id="engRun">Correr una vez ahora</button><button class="btn ghost" id="engRefresh">Actualizar estado</button></div>
     <div id="engStatus" class="note" style="margin-top:.8rem">consultando…</div>
-    <p class="note">En vivo, el servidor lee las ventas del catálogo cada minuto, evalúa los productos por turnos con las mismas reglas de la simulación y envía los precios nuevos al catálogo. Publica el modo "En vivo" antes de iniciar el motor. "Ventas esperadas" es la demanda con la que el precio se mantiene en su base: con más ventas sube, con menos baja (cada ${s.salesPerStep==null?2.5:s.salesPerStep} ventas de diferencia mueven un escalón).</p></div>
+    <p class="note">"Detener" quita la corrida por minuto y deja los precios como están; "Reanudar" la vuelve a activar sin tocar nada; "Iniciar" parte de cero desde la apertura publicada. En vivo, el servidor lee las ventas del catálogo cada minuto, evalúa los productos por turnos con las mismas reglas de la simulación y envía los precios nuevos al catálogo. Publica el modo "En vivo" antes de iniciar el motor. "Ventas esperadas" es la demanda con la que el precio se mantiene en su base: con más ventas sube, con menos baja (cada ${s.salesPerStep==null?2.5:s.salesPerStep} ventas de diferencia mueven un escalón).</p></div>
 
     <div class="card"><h2>Eventos</h2><div class="grid">
       <label>Happy Hour: descuento %<input type="number" id="hpct" value="${s.happyPct}" min="5" max="80"></label>
@@ -1005,6 +1005,7 @@ function renderAdmin(){
   const engAction=async(id,action,confirmMsg)=>{ if(dirty()){ toast('Publica primero los cambios pendientes.','',5000); return; } if(confirmMsg && !confirm(confirmMsg)) return; const b=$('#'+id); if(b) b.disabled=true; engOut('…'); try{ const d=await backendAction(action); engRender(d.status); if(d.summary){ const sm=d.summary; toast('Corrida: '+sm.ticks+' ticks, '+sm.sales+' ventas, '+sm.pushed+' precios enviados'+(sm.errors&&sm.errors.length?', errores: '+sm.errors.join('; '):'')+(sm.skipped?' (omitida: '+sm.skipped+')':''),'',8000); } }catch(e){ engOut('Error: '+esc(e.message)); } if(b) b.disabled=false; };
   bind('engStart',()=>{ if((CFG.settings.mode||'demo')!=='live'){ toast('Publica primero el modo "En vivo".','',6000); return; } engAction('engStart','engineStart','Iniciar el motor reinicia precios, historial y ventas contadas desde la apertura publicada. ¿Continuar?'); });
   bind('engStop',()=>engAction('engStop','engineStop'));
+  bind('engResume',()=>engAction('engResume','engineResume'));
   bind('engRun',()=>engAction('engRun','engineRun'));
   bind('engRefresh',engStatus);
   onInput('hpct',el=>draft.settings.happyPct=+el.value||30); onInput('ramt',el=>draft.settings.refillAmount=+el.value||2000);
@@ -1043,7 +1044,9 @@ function renderAdmin(){
   upd();
 }
 async function publishDraft(){
-  if(!dirty()) return; const btn=$('#publish'); btn.disabled=true; btn.textContent='Publicando…';
+  if(!dirty()) return;
+  if(usingBackend() && backendRev!=null && draftRev!=null && backendRev>draftRev && !confirm('Mientras editabas se publicó otra versión (rev '+backendRev+'). Si publicas, tus valores reemplazan a los de esa versión en todos los campos, incluidos los que no tocaste. ¿Publicar igual?')) return;
+  const btn=$('#publish'); btn.disabled=true; btn.textContent='Publicando…';
   const newCfg=JSON.parse(JSON.stringify(draft)); newCfg.rev=(CFG.rev||0)+1; newCfg.updatedAt=Date.now(); newCfg.settings.moveSec=deriveMoveSec(newCfg);
   if(usingBackend()){
     if(!adminPw){ toast('Vuelve a ingresar la contraseña para publicar.'); unlocked=false; renderGate(); return; }

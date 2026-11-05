@@ -5,7 +5,7 @@
  *           Con ?log=1 entrega el registro de publicaciones. Con ?integrations=1, el estado (enmascarado) de las integraciones.
  *  - POST → {password, config}: guarda la nueva configuración con rev+1 si la contraseña coincide con el hash guardado.
  *           {password, action, ...}: acciones de integración (secrets, catalog, catalogGet, sales, pushPrices) y del motor
- *           (engineStart, engineStop, engineRun, engineStatus), misma verificación.
+ *           (engineStart, engineResume, engineStop, engineRun, engineStatus), misma verificación.
  *  - GET ?state=1&srev=N → estado del mercado en vivo (Engine.js); ?engine=1 → estado del motor y del disparador.
  *
  * Almacena en Script Properties (no requiere autorización de Google para leer/escribir), partiendo el JSON en trozos de 8 KB.
@@ -111,8 +111,15 @@ function handleAction(body, password) {
         return json({ ok: true, status: engineStatus() });
       }
       case 'engineRun': {
+        const cfgRun = readStored(true);
+        if (((cfgRun && cfgRun.settings && cfgRun.settings.mode) || 'demo') !== 'live') return json({ ok: false, error: 'el modo publicado es demo: el motor no corre' });
         const summary = engineTick(true);
         return json({ ok: true, summary: summary, status: engineStatus() });
+      }
+      case 'engineResume': {
+        ensureTrigger();
+        logEvent('motor reanudado');
+        return json({ ok: true, status: engineStatus() });
       }
       case 'engineStatus':
         return json({ ok: true, status: engineStatus() });
