@@ -28,7 +28,7 @@ const SECRET_DEFAULTS = {};
 function doGet(e) {
   const p = (e && e.parameter) || {};
   if (p.log) return json(readLog());
-  if (p.integrations) return json({ integrations: secretsStatus(), version: 4 });
+  if (p.integrations) return json({ integrations: secretsStatus(), version: 5 });
   const stored = readStored();
   const rev = Number(p.rev || -1);
   if (stored && stored.rev === rev) return json({ rev: rev, same: true });
@@ -85,14 +85,14 @@ function handleAction(body, password) {
         return json({ ok: true, integrations: secretsStatus() });
       }
       case 'catalog': {
-        const products = catalogProducts();
+        const products = catalogProducts({ includeVariants: body.includeVariants === true, raw: body.raw === true });
         return json({ ok: true, resource: getSecrets().CAT_RESOURCE, products: products });
       }
       case 'sales': {
         const now = new Date();
         const init = body.initDate || fmtLocal(new Date(now.getTime() - 24 * 3600000));
         const end = body.endDate || fmtLocal(now);
-        return json(Object.assign({ ok: true, initDate: init, endDate: end }, salesSummary(init, end)));
+        return json(Object.assign({ ok: true, initDate: init, endDate: end }, salesSummary(init, end, { raw: body.raw === true, catalog: body.catalog })));
       }
       case 'pushPrices': {
         const list = Array.isArray(body.prices) ? body.prices : [];
@@ -162,22 +162,27 @@ function catalogRequest(method, path, query, body) {
   return parsed;
 }
 
-/** Todos los productos del catálogo, ya mapeados: id, name, price, sku, categories, active, hasVariants. */
-function catalogProducts() {
+/** Todos los productos del catálogo, ya mapeados: id, name, price, sku, categories, active, hasVariants.
+ *  opts.includeVariants agrega el campo variants tal como lo entrega el gateway; opts.raw devuelve los productos sin mapear. */
+function catalogProducts(opts) {
+  opts = opts || {};
   let page = 1, hasNext = true;
   const out = [];
   while (hasNext && page <= 50) {
     const payload = catalogRequest('get', '/products', {
       pageNumber: page, pageSize: 200, sortBy: 'name_asc',
-      includeVariants: 'false', includeTaxes: 'false', includeTags: 'true', includePromotions: 'false'
+      includeVariants: opts.includeVariants ? 'true' : 'false', includeTaxes: 'false', includeTags: 'true', includePromotions: 'false'
     });
     const block = payload.data || {};
     (block.products || []).forEach(function (p) {
+      if (opts.raw) { out.push(p); return; }
       let sku = '';
       (p.codes || []).forEach(function (c) { if (Number(c.codeType) === 10 && !sku) sku = c.value || ''; });
       const categories = (p.tags || []).filter(function (t) { return Number(t.tagType) === 10; }).map(function (t) { return String(t.name || '').trim(); }).filter(Boolean);
-      out.push({ id: p.id, name: p.name || '', price: Number(p.price) || 0, sku: sku, categories: categories,
-        active: p.active === true || p.active === 1, hasVariants: !!p.hasVariants });
+      const row = { id: p.id, name: p.name || '', price: Number(p.price) || 0, sku: sku, categories: categories,
+        active: p.active === true || p.active === 1, hasVariants: !!p.hasVariants };
+      if (opts.includeVariants) row.variants = p.variants || p.variantGroups || p.options || null;
+      out.push(row);
     });
     hasNext = !!(block.pagination && block.pagination.hasNext);
     page++;
@@ -219,11 +224,16 @@ function salesItems(initDate, endDate) {
   throw new Error('Ventas: se esperaba una lista de ítems');
 }
 
-/** Ventas del período, solo las del catálogo configurado, agregadas por SKU. */
-function salesSummary(initDate, endDate) {
+/** Ventas del período, solo las del catálogo configurado (o opts.catalog), agregadas por SKU.
+ *  Siempre incluye el conteo de líneas por idCatalogue; opts.raw agrega las líneas sin agregar (máx. 300). */
+function salesSummary(initDate, endDate, opts) {
+  opts = opts || {};
   const s = getSecrets();
   const items = salesItems(initDate, endDate);
-  const mine = items.filter(function (it) { return it && String(it.idCatalogue || '') === s.CAT_RESOURCE; });
+  const target = opts.catalog ? String(opts.catalog) : s.CAT_RESOURCE;
+  const catalogs = {};
+  items.forEach(function (it) { const k = String((it && it.idCatalogue) || '(sin catálogo)'); catalogs[k] = (catalogs[k] || 0) + 1; });
+  const mine = items.filter(function (it) { return it && String(it.idCatalogue || '') === target; });
   const by = {};
   mine.forEach(function (it) {
     const key = it.itemCode || ('#' + it.productId);
@@ -232,7 +242,10 @@ function salesSummary(initDate, endDate) {
     o.total += Number(it.itemTotal) || 0;
     if (String(it.saleDate || '') > o.last) o.last = String(it.saleDate || '');
   });
-  return { total: items.length, matched: mine.length, bySku: Object.keys(by).map(function (k) { return by[k]; }).sort(function (a, b) { return b.qty - a.qty; }) };
+  const result = { total: items.length, matched: mine.length, catalog: target, catalogs: catalogs,
+    bySku: Object.keys(by).map(function (k) { return by[k]; }).sort(function (a, b) { return b.qty - a.qty; }) };
+  if (opts.raw) result.items = mine.slice(0, 300);
+  return result;
 }
 
 function fmtLocal(date) {
