@@ -4,7 +4,7 @@
  *  - GET  → entrega la configuración vigente del mercado (JSON). Con ?rev=N responde {same:true} si no cambió.
  *           Con ?log=1 entrega el registro de publicaciones. Con ?integrations=1, el estado (enmascarado) de las integraciones.
  *  - POST → {password, config}: guarda la nueva configuración con rev+1 si la contraseña coincide con el hash guardado.
- *           {password, action, ...}: acciones de integración (secrets, catalog, sales, pushPrices), misma verificación.
+ *           {password, action, ...}: acciones de integración (secrets, catalog, catalogGet, sales, pushPrices), misma verificación.
  *
  * Almacena en Script Properties (no requiere autorización de Google para leer/escribir), partiendo el JSON en trozos de 8 KB.
  * Las integraciones con el catálogo y las ventas de Haulmer usan UrlFetchApp, que sí requiere que el dueño del script
@@ -28,7 +28,7 @@ const SECRET_DEFAULTS = {};
 function doGet(e) {
   const p = (e && e.parameter) || {};
   if (p.log) return json(readLog());
-  if (p.integrations) return json({ integrations: secretsStatus(), version: 6 });
+  if (p.integrations) return json({ integrations: secretsStatus(), version: 8 });
   const stored = readStored();
   const rev = Number(p.rev || -1);
   if (stored && stored.rev === rev) return json({ rev: rev, same: true });
@@ -87,6 +87,12 @@ function handleAction(body, password) {
       case 'catalog': {
         const products = catalogProducts({ includeVariants: body.includeVariants === true, raw: body.raw === true });
         return json({ ok: true, resource: getSecrets().CAT_RESOURCE, products: products });
+      }
+      case 'catalogGet': {
+        // Solo lectura, para explorar el gateway desde la mesa de control: {path:'/products', query:{...}}
+        const path = String(body.path || '');
+        if (!/^\/[A-Za-z0-9\/_-]*$/.test(path)) return json({ ok: false, error: 'path inválido' });
+        return json({ ok: true, data: catalogRequest('get', path, body.query || null) });
       }
       case 'sales': {
         const now = new Date();
