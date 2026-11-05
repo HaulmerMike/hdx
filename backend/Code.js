@@ -4,7 +4,9 @@
  *  - GET  → entrega la configuración vigente del mercado (JSON). Con ?rev=N responde {same:true} si no cambió.
  *           Con ?log=1 entrega el registro de publicaciones. Con ?integrations=1, el estado (enmascarado) de las integraciones.
  *  - POST → {password, config}: guarda la nueva configuración con rev+1 si la contraseña coincide con el hash guardado.
- *           {password, action, ...}: acciones de integración (secrets, catalog, catalogGet, sales, pushPrices), misma verificación.
+ *           {password, action, ...}: acciones de integración (secrets, catalog, catalogGet, sales, pushPrices) y del motor
+ *           (engineStart, engineStop, engineRun, engineStatus), misma verificación.
+ *  - GET ?state=1&srev=N → estado del mercado en vivo (Engine.js); ?engine=1 → estado del motor y del disparador.
  *
  * Almacena en Script Properties (no requiere autorización de Google para leer/escribir), partiendo el JSON en trozos de 8 KB.
  * Las integraciones con el catálogo y las ventas de Haulmer usan UrlFetchApp, que sí requiere que el dueño del script
@@ -28,7 +30,14 @@ const SECRET_DEFAULTS = {};
 function doGet(e) {
   const p = (e && e.parameter) || {};
   if (p.log) return json(readLog());
-  if (p.integrations) return json({ integrations: secretsStatus(), version: 9 });
+  if (p.integrations) return json({ integrations: secretsStatus(), version: 10 });
+  if (p.engine) return json(engineStatus());
+  if (p.state) {
+    const st = readState();
+    if (!st) return json({ srev: 0, empty: true });
+    if (Number(p.srev || -1) === st.srev) return json({ srev: st.srev, same: true });
+    return json(enginePublicState(st));
+  }
   const stored = readStored();
   const rev = Number(p.rev || -1);
   if (stored && stored.rev === rev) return json({ rev: rev, same: true });
@@ -88,6 +97,25 @@ function handleAction(body, password) {
         const products = catalogProducts({ includeVariants: body.includeVariants === true, raw: body.raw === true });
         return json({ ok: true, resource: getSecrets().CAT_RESOURCE, products: products });
       }
+      case 'engineStart': {
+        const cfg = readStored(true);
+        const st = engineInit(cfg, Date.now());
+        writeState(st);
+        ensureTrigger();
+        logEvent('motor iniciado (estado reiniciado)');
+        return json({ ok: true, status: engineStatus() });
+      }
+      case 'engineStop': {
+        removeTrigger();
+        logEvent('motor detenido');
+        return json({ ok: true, status: engineStatus() });
+      }
+      case 'engineRun': {
+        const summary = engineTick(true);
+        return json({ ok: true, summary: summary, status: engineStatus() });
+      }
+      case 'engineStatus':
+        return json({ ok: true, status: engineStatus() });
       case 'catalogGet': {
         // Solo lectura, para explorar el gateway desde la mesa de control: {path:'/products', query:{...}}
         const path = String(body.path || '');
@@ -115,8 +143,115 @@ function handleAction(body, password) {
   }
 }
 
-/** Ejecutar UNA VEZ desde el editor para autorizar el acceso a internet del script (UrlFetchApp). */
+/* ---------- motor de precios en vivo (Engine.js) ---------- */
+
+const STATE_CACHE_KEY = 'hdx-state';
+const STATE_CACHE_SECONDS = 5;
+const TRIGGER_FN = 'engineTick';
+
+/** Corrida del motor: la llama el disparador por minuto. Con force=true corre aunque el modo publicado no sea "live". */
+function engineTick(force) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) return { skipped: 'lock' };
+  try {
+    const cfg = readStored(true);
+    if (!cfg) return { skipped: 'sin configuración' };
+    const mode = (cfg.settings || {}).mode || 'demo';
+    if (mode !== 'live' && !force) return { skipped: 'modo ' + mode };
+    let st = readState();
+    const now = Date.now();
+    if (!st || st.open !== cfg.openAt) st = engineInit(cfg, now);
+    if (st.cfgRev !== (cfg.rev || 0)) engineSyncConfig(st, cfg);
+    const summary = engineRunOnce(cfg, st, now, {
+      fetchLines: function (fromMs, toMs) { return fetchSalesLines(cfg, fromMs, toMs); },
+      pushPrice: function (catalogId, price) {
+        catalogRequest('put', '/products/' + encodeURIComponent(catalogId) + '/complex-update', null, { price: Number(price) });
+        return { ok: true };
+      }
+    });
+    writeState(st);
+    return summary;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Ventas reales del período mapeadas a ticker: [{key, at, t, qty}]. Solo las del catálogo configurado. */
+function fetchSalesLines(cfg, fromMs, toMs) {
+  const s = getSecrets();
+  const items = salesItems(fmtLocal(new Date(fromMs)), fmtLocal(new Date(toMs)));
+  const seq = {};
+  const out = [];
+  items.forEach(function (it) {
+    if (!it || String(it.idCatalogue || '') !== s.CAT_RESOURCE) return;
+    const base = String(it.saleId) + '|' + (it.productId || it.itemCode || it.itemName || '');
+    const n = seq[base] = (seq[base] || 0) + 1;
+    out.push(engineMapLine(it, n, cfg, parseLocalDate));
+  });
+  return out;
+}
+
+/** "yyyy-MM-ddTHH:mm:ss(.SSS)" en hora de Chile → epoch ms. */
+function parseLocalDate(str) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?/.exec(String(str || ''));
+  if (!m) return 0;
+  const guess = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], +((m[7] || '0') + '00').slice(0, 3));
+  const off = Utilities.formatDate(new Date(guess), TZ, 'Z'); // ej. -0300
+  const sign = off[0] === '-' ? -1 : 1; const offMs = sign * (Number(off.slice(1, 3)) * 60 + Number(off.slice(3, 5))) * 60000;
+  return guess - offMs;
+}
+
+function engineStatus() {
+  const st = readState();
+  const cfg = readStored();
+  const trig = triggerExists();
+  return {
+    mode: (cfg && cfg.settings && cfg.settings.mode) || 'demo', trigger: trig, version: 10,
+    state: st ? { srev: st.srev, status: st.status, k: st.k, t: st.t, open: st.open, closeTick: st.closeTick, runs: st.runs, lastRunAt: st.lastRunAt, lastRunMs: st.lastRunMs, lastError: st.lastError,
+      counted: st.sales.counted, lastFetch: st.sales.lastFetch, pushLog: st.pushLog.slice(0, 10), prices: st.prods.map(function (p) { return { t: p.t, eff: p.eff, W: p.W, stock: p.stock, pushed: st.pushed[p.t] }; }) } : null
+  };
+}
+
+function triggerExists() {
+  try { return ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === TRIGGER_FN; }); } catch (e) { return false; }
+}
+function ensureTrigger() {
+  if (triggerExists()) return;
+  ScriptApp.newTrigger(TRIGGER_FN).timeBased().everyMinutes(1).create();
+}
+function removeTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === TRIGGER_FN) ScriptApp.deleteTrigger(t); });
+}
+
+function readState() {
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get(STATE_CACHE_KEY);
+  if (hit) return JSON.parse(hit);
+  const props = PropertiesService.getScriptProperties();
+  const n = Number(props.getProperty('st_n') || 0);
+  if (!n) return null;
+  let text = '';
+  for (let i = 0; i < n; i++) text += props.getProperty('st_' + i) || '';
+  if (!text) return null;
+  if (text.length < 100000) cache.put(STATE_CACHE_KEY, text, STATE_CACHE_SECONDS);
+  return JSON.parse(text);
+}
+function writeState(st) {
+  const text = JSON.stringify(st);
+  const props = PropertiesService.getScriptProperties();
+  const parts = {}; let n = 0;
+  for (let i = 0; i < text.length; i += CHUNK) parts['st_' + (n++)] = text.slice(i, i + CHUNK);
+  parts['st_n'] = String(n);
+  const old = Number(props.getProperty('st_n') || 0);
+  props.setProperties(parts);
+  for (let i = n; i < old; i++) props.deleteProperty('st_' + i);
+  if (text.length < 100000) CacheService.getScriptCache().put(STATE_CACHE_KEY, text, STATE_CACHE_SECONDS);
+  else CacheService.getScriptCache().remove(STATE_CACHE_KEY);
+}
+
+/** Ejecutar UNA VEZ desde el editor para autorizar el acceso a internet del script (UrlFetchApp) y los disparadores (ScriptApp). */
 function authorize() {
+  ScriptApp.getProjectTriggers();
   UrlFetchApp.fetch('https://www.google.com', { muteHttpExceptions: true });
   PropertiesService.getScriptProperties().getProperty('cfg_n');
   Logger.log('Autorizado. Ya puedes desplegar la versión con integraciones.');
