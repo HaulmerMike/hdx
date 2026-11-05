@@ -45,7 +45,7 @@ function engineInit(cfg, now) {
   var prods = [], i = 0;
   (cfg.products || []).forEach(function (p) {
     if (p.hidden) return;
-    prods.push({ t: p.t, i: i++, base: p.base, stock0: p.stock, stock: p.stock, pop: p.pop || 1, pinned: !!(p.pinned || p.pin), ipoAt: p.ipoAt || null, catalogId: p.catalogId || null,
+    prods.push({ t: p.t, i: i++, base: p.base, stock0: p.stock, stock: p.stock, pop: p.pop || 1, pinned: !!(p.pinned || p.pin), fixed: !!p.fixed, ipoAt: p.ipoAt || null, catalogId: p.catalogId || null,
       price: p.base, eff: p.base, mood: 1, W: 0, ring: [], vol: 0, hist: [], full: [], fullMin: -1, moves: [], suspended: false, active: !p.ipoAt,
       hi: p.base, lo: p.base, changedAt: -1, dir: 0, bigAt: -999, bigDir: 0, pct10: 0 });
     for (var r = 0; r < C.WIN; r++) prods[prods.length - 1].ring.push(0);
@@ -121,7 +121,8 @@ function engineStep(state, cfg, k, demandFn, C) {
     imps.forEach(function (im) { if (im.t === p.t && Math.floor((im.at - state.open) / C.TICK) === k) sales += Number(im.qty) || 0; });
     if (p.stock <= 0) { sales = 0; p.suspended = true; } else { sales = Math.min(sales, p.stock); p.stock -= sales; if (p.stock <= 0) p.suspended = true; }
     var old = p.ring[k % C.WIN]; p.ring[k % C.WIN] = sales; p.W += sales - old; p.vol += sales; state.totalVol += sales;
-    if (k % n === p.i && !p.suspended) {
+    if (p.fixed) { p.price = p.base; } // precio fijo: se queda en la base, sin reaccionar a la demanda
+    else if (k % n === p.i && !p.suspended) {
       // La referencia crece con la ventana: en los primeros 10 minutos no hay historia completa y no corresponde bajar precios por eso.
       var warm = Math.min(1, (k + 1) / C.WIN);
       var wref = refSales * p.pop * warm; var steps = Math.round((p.W - wref) / perStep);
@@ -157,9 +158,9 @@ function engineSyncConfig(st, cfg) {
   (cfg.products || []).forEach(function (p) {
     if (p.hidden) return;
     var old = byT[p.t];
-    if (old) { old.i = i++; old.base = p.base; old.pop = p.pop || 1; old.pinned = !!(p.pinned || p.pin); old.catalogId = p.catalogId || null; if (p.stock !== old.stock0) { old.stock += (p.stock - old.stock0); old.stock0 = p.stock; if (old.stock > 0) old.suspended = false; } prods.push(old); }
+    if (old) { old.i = i++; old.base = p.base; old.pop = p.pop || 1; old.pinned = !!(p.pinned || p.pin); old.fixed = !!p.fixed; old.catalogId = p.catalogId || null; if (p.stock !== old.stock0) { old.stock += (p.stock - old.stock0); old.stock0 = p.stock; if (old.stock > 0) old.suspended = false; } prods.push(old); }
     else {
-      var np = { t: p.t, i: i++, base: p.base, stock0: p.stock, stock: p.stock, pop: p.pop || 1, pinned: !!(p.pinned || p.pin), ipoAt: p.ipoAt || null, catalogId: p.catalogId || null,
+      var np = { t: p.t, i: i++, base: p.base, stock0: p.stock, stock: p.stock, pop: p.pop || 1, pinned: !!(p.pinned || p.pin), fixed: !!p.fixed, ipoAt: p.ipoAt || null, catalogId: p.catalogId || null,
         price: p.base, eff: p.base, mood: 1, W: 0, ring: [], vol: 0, hist: [], full: [], fullMin: -1, moves: [], suspended: false, active: !p.ipoAt, hi: p.base, lo: p.base, changedAt: -1, dir: 0, bigAt: -999, bigDir: 0, pct10: 0 };
       for (var r = 0; r < C.WIN; r++) np.ring.push(0);
       prods.push(np);
