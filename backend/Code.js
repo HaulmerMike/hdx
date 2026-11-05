@@ -22,11 +22,8 @@ const TZ = 'America/Santiago';
 
 /* Claves de integración guardadas en Script Properties. Las *_KEY nunca se devuelven completas. */
 const SECRET_KEYS = ['CAT_BASE_URL', 'CAT_API_KEY', 'CAT_RESOURCE', 'SALES_BASE_URL', 'SALES_API_KEY', 'SALES_TAX_ID'];
-const SECRET_DEFAULTS = {
-  CAT_BASE_URL: 'https://devhaulmer.azure-api.net/external/v2/catalogue',
-  SALES_BASE_URL: 'https://api.haulmer.dev/v3/sales',
-  SALES_TAX_ID: '76264675'
-};
+/* Sin valores por defecto: las URLs y claves de las APIs internas de Haulmer se cargan solo en Script Properties. */
+const SECRET_DEFAULTS = {};
 
 function doGet(e) {
   const p = (e && e.parameter) || {};

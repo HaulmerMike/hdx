@@ -935,12 +935,12 @@ function renderAdmin(){
     <div class="card" id="integ"><h2>Integraciones con el catálogo y las ventas</h2>
       <p class="note">Las claves se guardan en el servidor y nunca vuelven a la página. Deja vacío lo que no quieras cambiar. Estado: <span id="integStatus">consultando…</span></p>
       <div class="grid">
-        <label>Catálogo: URL del gateway<input id="sCAT_BASE_URL" placeholder="https://devhaulmer.azure-api.net/external/v2/catalogue"></label>
+        <label>Catálogo: URL del gateway<input id="sCAT_BASE_URL" placeholder="URL del gateway (la entrega el equipo)"></label>
         <label>Catálogo: clave (apikey)<input id="sCAT_API_KEY" type="password" autocomplete="off" placeholder="sin cambios"></label>
         <label>Catálogo: identificador (uuid)<input id="sCAT_RESOURCE" placeholder="uuid del catálogo"></label>
-        <label>Ventas: URL base<input id="sSALES_BASE_URL" placeholder="https://api.haulmer.dev/v3/sales"></label>
+        <label>Ventas: URL base<input id="sSALES_BASE_URL" placeholder="URL base de ventas (la entrega el equipo)"></label>
         <label>Ventas: clave (X-API-Key)<input id="sSALES_API_KEY" type="password" autocomplete="off" placeholder="sin cambios"></label>
-        <label>Ventas: RUT del comercio<input id="sSALES_TAX_ID" placeholder="76264675"></label>
+        <label>Ventas: RUT del comercio<input id="sSALES_TAX_ID" placeholder="RUT sin dígito verificador"></label>
         <button class="btn" id="saveSecrets">Guardar en el servidor</button>
       </div>
       <div class="evbtns" style="margin-top:.8rem">
