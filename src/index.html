@@ -68,6 +68,9 @@ body::before{ content:""; position:fixed; inset:0 0 auto; height:env(safe-area-i
 .nextbar{ height:3px; background:var(--border); width:100%; position:relative; overflow:hidden; }
 .nextbar i{ display:block; height:100%; width:0; background:var(--text-3); transition:width .25s linear; }
 html.armed .nextbar i{ background:var(--text); box-shadow:0 0 10px var(--text); }
+.valrow{ display:flex; align-items:center; gap:.45em; }
+.ring{ width:1.1em; height:1.1em; font-size:1.25rem; flex:none; transform:rotate(-90deg); }
+.ring circle{ fill:none; stroke-width:2.6; } .ring .bg{ stroke:var(--border); } .ring .fg{ stroke:var(--text); stroke-linecap:round; stroke-dasharray:43.98; stroke-dashoffset:0; transition:stroke-dashoffset .25s linear; }
 .stat .val.cd{ transition:color .3s; } html.armed .stat .val.cd{ color:var(--text); animation:breath 1s ease-in-out infinite; }
 @keyframes breath{ 0%,100%{ opacity:1 } 50%{ opacity:.45 } }
 .pcard,.tbl tr{ transition:border-color .8s ease, box-shadow .8s ease; }
@@ -595,7 +598,7 @@ function shellHtml(tvMode){
     <div class="status"><span class="dot" id="dot"></span><span id="mkt">Mercado abierto</span><span class="mono" id="clock"></span></div>
     <div class="stat"><span class="lbl">Índice HDX</span><span class="val"><span id="idxv">1.000,0</span> <span class="chg" id="idxc"></span></span></div>
     <div class="stat" id="refillstat" hidden><span class="lbl">Próximo refill</span><span class="val" id="refill">—</span></div>
-    <div class="stat"><span class="lbl">Próxima evaluación</span><span class="val mono cd" id="next">—</span></div>
+    <div class="stat"><span class="lbl">Próxima evaluación</span><span class="valrow"><span class="val mono cd" id="next">—</span><svg class="ring" id="nextring" viewBox="0 0 18 18" aria-hidden="true" hidden><circle class="bg" cx="9" cy="9" r="7"/><circle class="fg" cx="9" cy="9" r="7"/></svg></span></div>
     <div class="stat"><span class="lbl">Última actualización</span><span class="val mono" id="upd">—</span></div>
     <div class="right">
       <div class="tvhint"><span>TV</span><div class="tvdots" id="tvdots"><i></i><i></i><i></i><i></i></div></div>
@@ -772,7 +775,10 @@ function updateHeader(now,info){
   const nr=CFG.nextRefillAt; const rs=$('#refillstat'); const showR= !!nr && nr>now; rs.hidden=!showR; if(showR) $('#refill').textContent=mmss(nr-now);
   // next move countdown + anticipation
   const nx=$('#next'); const fill=$('#nextfill');
-  if(info.status==='open' && liveMode()){ const np=sim.prods.length? sim.prods[(sim.k+1)%sim.prods.length] : null; nx.textContent= sim.live? (np? np.t+' · ':'')+'motor cada minuto' : 'esperando al motor'; fill.style.width='0%'; if(armed){ armed=false; document.documentElement.classList.remove('armed'); } }
+  const ring=$('#nextring'); if(ring) ring.toggleAttribute('hidden', !(info.status==='open' && liveMode() && sim.live));
+  if(info.status==='open' && liveMode()){ const el=(now-sim.open)%CYCLE; const left=CYCLE-el; const np=sim.prods.length? sim.prods[(info.k+1)%sim.prods.length] : null;
+    nx.textContent= sim.live? (np? np.t+' en ':'')+Math.ceil(left/1000)+' s' : 'esperando al motor'; fill.style.width='0%'; if(armed){ armed=false; document.documentElement.classList.remove('armed'); }
+    if(ring){ const fg=ring.querySelector('.fg'); if(fg) fg.style.strokeDashoffset=(43.98*el/CYCLE).toFixed(2); } }
   else if(info.status==='open'){ const el=(now-sim.open)%CYCLE; const left=CYCLE-el; const np=sim.prods.length? sim.prods[(info.k+1)%sim.prods.length] : null; nx.textContent=(np?np.t+' en ':'')+(left/1000).toFixed(0)+' s'; const nt=np?np.t:''; if(nt!==nextT){ app.querySelectorAll('.next').forEach(e=>e.classList.remove('next')); if(nt) app.querySelectorAll(`[data-t="${nt}"]`).forEach(e=>{ if(!e.classList.contains('it')) e.classList.add('next'); }); nextT=nt; } fill.style.width=(el/CYCLE*100).toFixed(1)+'%'; const arm=left<=2500; if(arm!==armed){ armed=arm; document.documentElement.classList.toggle('armed',arm); } const sec=Math.ceil(left/1000); if(arm && sec!==lastTickSec){ lastTickSec=sec; sfx('tick'); } }
   else { nx.textContent='—'; fill.style.width='0%'; if(armed){ armed=false; document.documentElement.classList.remove('armed'); } }
   const hp=happyAt(CFG,now), lc=lastCallAt(CFG,now); const b=$('#banner');
