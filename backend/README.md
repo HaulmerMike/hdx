@@ -32,6 +32,18 @@ Si cambian los scopes del manifiesto, el dueño debe ejecutar `authorize` una ve
   `engineStart` (reinicia el estado y crea el disparador por minuto), `engineStop` (quita el disparador), `engineRun` (una corrida ahora), `engineStatus`.
 - Lecturas con caché corta para soportar muchos teléfonos consultando a la vez.
 
+## Fuentes de ventas
+
+- **Gastronomía** (preferida): con `GASTRO_BASE_URL`, `GASTRO_API_KEY` y `GASTRO_RESOURCE` (gastronomyId del espacio; opcional `GASTRO_BRANCH_ID`,
+  "0" = todas las sucursales). `GET {base}/integrations/v1/gastronomy/{resource}/sales?startDate&endDate&page&pageSize` con header
+  `X-API-Key`: atenciones cerradas y pagadas, cada una con `products[]` (`productCatalogueId`, `quantity`, `unitPrice`) y
+  `catalogueResource`. Filtra por día en UTC (máx. 90 días, 50 por página, de la más reciente a la más antigua); el backend pide con un
+  día de margen, filtra por `completedAt` y deja de paginar al pasar el inicio del período. Las líneas se mapean a ticker por el id de
+  producto del catálogo y se descartan las de otros catálogos. `totalAmount` de la atención incluye la propina, por eso puede superar la
+  suma de las líneas.
+- **Ventas por ítem** (API antigua, respaldo): `SALES_BASE_URL`, `SALES_API_KEY`, `SALES_TAX_ID`; solo las líneas que traen
+  `idCatalogue` del catálogo configurado. Las ventas hechas desde Gastronomía llegan ahí como "Item Manual" sin detalle.
+
 ## Motor en vivo
 
 `engineTick` corre cada minuto por un disparador de tiempo. Si el modo publicado es `live`:

@@ -7,6 +7,8 @@
  *           {password, action, ...}: acciones de integración (secrets, catalog, catalogGet, sales, pushPrices) y del motor
  *           (engineStart, engineResume, engineStop, engineRun, engineStatus), misma verificación.
  *  - GET ?state=1&srev=N → estado del mercado en vivo (Engine.js); ?engine=1 → estado del motor y del disparador.
+ *  Ventas: si están GASTRO_API_KEY y GASTRO_RESOURCE se usa la API de Gastronomía (atenciones cerradas y pagadas, con
+ *  productCatalogueId por línea); si no, la API antigua de ventas por ítem (SALES_*).
  *
  * Almacena en Script Properties (no requiere autorización de Google para leer/escribir), partiendo el JSON en trozos de 8 KB.
  * Las integraciones con el catálogo y las ventas de Haulmer usan UrlFetchApp, que sí requiere que el dueño del script
@@ -23,14 +25,14 @@ const LOG_MAX = 100;
 const TZ = 'America/Santiago';
 
 /* Claves de integración guardadas en Script Properties. Las *_KEY nunca se devuelven completas. */
-const SECRET_KEYS = ['CAT_BASE_URL', 'CAT_API_KEY', 'CAT_RESOURCE', 'SALES_BASE_URL', 'SALES_API_KEY', 'SALES_TAX_ID'];
+const SECRET_KEYS = ['CAT_BASE_URL', 'CAT_API_KEY', 'CAT_RESOURCE', 'SALES_BASE_URL', 'SALES_API_KEY', 'SALES_TAX_ID', 'GASTRO_BASE_URL', 'GASTRO_API_KEY', 'GASTRO_RESOURCE', 'GASTRO_BRANCH_ID'];
 /* Sin valores por defecto: las URLs y claves de las APIs internas de Haulmer se cargan solo en Script Properties. */
 const SECRET_DEFAULTS = {};
 
 function doGet(e) {
   const p = (e && e.parameter) || {};
   if (p.log) return json(readLog());
-  if (p.integrations) return json({ integrations: secretsStatus(), version: 10 });
+  if (p.integrations) return json({ integrations: secretsStatus(), version: 11 });
   if (p.engine) return json(engineStatus());
   if (p.state) {
     const st = readState();
@@ -90,6 +92,7 @@ function handleAction(body, password) {
         const set = {};
         SECRET_KEYS.forEach(function (k) { const v = given[k]; if (v != null && String(v).trim() !== '') set[k] = String(v).trim(); });
         if (Object.keys(set).length) props.setProperties(set);
+        if (set.GASTRO_BRANCH_ID === '0' || set.GASTRO_BRANCH_ID === '-') props.deleteProperty('GASTRO_BRANCH_ID'); // "0" o "-" = todas las sucursales
         logEvent('integraciones: ' + Object.keys(set).join(', '));
         return json({ ok: true, integrations: secretsStatus() });
       }
@@ -133,7 +136,9 @@ function handleAction(body, password) {
         const now = new Date();
         const init = body.initDate || fmtLocal(new Date(now.getTime() - 24 * 3600000));
         const end = body.endDate || fmtLocal(now);
-        return json(Object.assign({ ok: true, initDate: init, endDate: end }, salesSummary(init, end, { raw: body.raw === true, all: body.all === true, catalog: body.catalog })));
+        const opts = { raw: body.raw === true, all: body.all === true, catalog: body.catalog };
+        const summary = gastroConfigured() && body.source !== 'legacy' ? gastroSummary(init, end, opts) : salesSummary(init, end, opts);
+        return json(Object.assign({ ok: true, initDate: init, endDate: end }, summary));
       }
       case 'pushPrices': {
         const list = Array.isArray(body.prices) ? body.prices : [];
@@ -186,6 +191,7 @@ function engineTick(force) {
 
 /** Ventas reales del período mapeadas a ticker: [{key, at, t, qty}]. Solo las del catálogo configurado. */
 function fetchSalesLines(cfg, fromMs, toMs) {
+  if (gastroConfigured()) return gastroLines(cfg, fromMs, toMs);
   const s = getSecrets();
   const items = salesItems(fmtLocal(new Date(fromMs)), fmtLocal(new Date(toMs)));
   const seq = {};
@@ -197,6 +203,96 @@ function fetchSalesLines(cfg, fromMs, toMs) {
     out.push(engineMapLine(it, n, cfg, parseLocalDate));
   });
   return out;
+}
+
+/* ---------- integraciones: ventas de Gastronomía (atenciones cerradas y pagadas, header X-API-Key) ---------- */
+
+function gastroConfigured() { const s = getSecrets(); return !!(s.GASTRO_API_KEY && s.GASTRO_RESOURCE); }
+
+/** GET {GASTRO_BASE_URL}/integrations/v1/gastronomy/{resource}/sales?startDate&endDate&page&pageSize[&restaurantBranchId]. Devuelve data (data[], totalCount, totalPages). */
+function gastroRequest(query) {
+  const s = getSecrets();
+  const base = String(s.GASTRO_BASE_URL || '').replace(/\/+$/, '');
+  if (!base || !s.GASTRO_API_KEY || !s.GASTRO_RESOURCE) throw new Error('Faltan GASTRO_BASE_URL, GASTRO_API_KEY o GASTRO_RESOURCE');
+  const prefix = base.indexOf('azure-api.net') !== -1 ? '/integrations/v1' : '/public/integrations/v1';
+  const q = Object.assign({}, query);
+  if (s.GASTRO_BRANCH_ID && s.GASTRO_BRANCH_ID !== '0') q.restaurantBranchId = s.GASTRO_BRANCH_ID;
+  const qs = Object.keys(q).filter(function (k) { return q[k] !== null && q[k] !== undefined && q[k] !== ''; })
+    .map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(q[k]); }).join('&');
+  const url = base + prefix + '/gastronomy/' + encodeURIComponent(s.GASTRO_RESOURCE) + '/sales' + (qs ? '?' + qs : '');
+  let attempt = 0;
+  while (true) {
+    const response = UrlFetchApp.fetch(url, { method: 'get', muteHttpExceptions: true, headers: { 'X-API-Key': s.GASTRO_API_KEY, Accept: 'application/json' } });
+    const code = response.getResponseCode();
+    const text = response.getContentText();
+    if ((code === 502 || code === 503 || code === 504) && attempt < 2) { attempt++; Utilities.sleep(800 * attempt); continue; }
+    if (code < 200 || code >= 300) throw new Error('Gastronomía HTTP ' + code + ': ' + text.slice(0, 200));
+    let parsed;
+    try { parsed = JSON.parse(text); } catch (e) { throw new Error('Gastronomía: respuesta no JSON'); }
+    if (parsed && parsed.error === true) throw new Error(parsed.message || 'Gastronomía: error');
+    return (parsed && parsed.data) || {};
+  }
+}
+
+/** Atenciones completadas entre fromMs y toMs (epoch). La API filtra por día (UTC), así que se pide con un día de margen y se filtra aquí.
+ *  Las páginas vienen de la más reciente a la más antigua: se deja de paginar al pasar fromMs. */
+function gastroAttentions(fromMs, toMs, maxPages) {
+  const day = function (ms) { return Utilities.formatDate(new Date(ms), 'GMT', 'yyyy-MM-dd'); };
+  const start = day(fromMs - 86400000), end = day(toMs + 86400000);
+  const out = []; let page = 1, totalPages = 1, pages = 0;
+  do {
+    const block = gastroRequest({ startDate: start, endDate: end, page: page, pageSize: 50 });
+    const list = block.data || [];
+    totalPages = Number(block.totalPages) || 1; pages++;
+    let oldest = Infinity;
+    list.forEach(function (a) { const t = Date.parse(a.completedAt); if (t < oldest) oldest = t; if (t >= fromMs && t <= toMs) out.push(a); });
+    if (list.length && oldest < fromMs) break;
+    page++;
+  } while (page <= totalPages && pages < (maxPages || 20));
+  return out;
+}
+
+/** Líneas para el motor: [{key, at, t, qty}] solo del catálogo configurado, mapeadas a ticker por el id de producto del catálogo. */
+function gastroLines(cfg, fromMs, toMs) {
+  const s = getSecrets();
+  const byId = {}; (cfg.products || []).forEach(function (p) { if (p.catalogId) byId[String(p.catalogId)] = p.t; });
+  const out = [];
+  gastroAttentions(fromMs, toMs).forEach(function (a) {
+    (a.products || []).forEach(function (p) {
+      const cr = String(p.catalogueResource || a.catalogueResource || '');
+      if (s.CAT_RESOURCE && cr !== s.CAT_RESOURCE) return;
+      out.push({ key: 'g' + a.attentionId + '|' + p.productId, at: Date.parse(a.completedAt), t: byId[String(p.productCatalogueId || '')] || '', qty: Number(p.quantity) || 0 });
+    });
+  });
+  return out;
+}
+
+/** Resumen para la mesa de control: mismo formato que salesSummary, más atenciones y sucursales. */
+function gastroSummary(initDate, endDate, opts) {
+  opts = opts || {};
+  const s = getSecrets(); const cfg = readStored() || {};
+  const target = opts.catalog ? String(opts.catalog) : s.CAT_RESOURCE;
+  const byId = {}; (cfg.products || []).forEach(function (p) { if (p.catalogId) byId[String(p.catalogId)] = p.t; });
+  const atts = gastroAttentions(parseLocalDate(initDate), parseLocalDate(endDate));
+  const catalogs = {}, branches = {}, by = {}; let total = 0, matched = 0; const items = [];
+  atts.forEach(function (a) {
+    const b = String(a.restaurantBranchId || '?') + ' ' + (a.restaurantBranchName || ''); branches[b] = (branches[b] || 0) + 1;
+    (a.products || []).forEach(function (p) {
+      total++;
+      const cr = String(p.catalogueResource || a.catalogueResource || '(sin catálogo)'); catalogs[cr] = (catalogs[cr] || 0) + 1;
+      if (target && cr !== target) return;
+      matched++;
+      const key = byId[String(p.productCatalogueId || '')] || ('#' + p.productCatalogueId);
+      const o = by[key] || (by[key] = { sku: key, productId: p.productCatalogueId, name: String(p.name || '').trim(), qty: 0, total: 0, last: '' });
+      o.qty += Number(p.quantity) || 0; o.total += Number(p.totalAmount) || 0;
+      const when = fmtLocal(new Date(Date.parse(a.completedAt))); if (when > o.last) o.last = when;
+      if (opts.raw) items.push({ attentionId: a.attentionId, completedAt: a.completedAt, branch: a.restaurantBranchName, origin: a.origin && a.origin.typeName, productId: p.productId, productCatalogueId: p.productCatalogueId, name: p.name, quantity: p.quantity, unitPrice: p.unitPrice, totalAmount: p.totalAmount, attentionTotal: a.totalAmount });
+    });
+  });
+  const result = { source: 'gastronomy', total: total, attentions: atts.length, matched: matched, catalog: target, catalogs: catalogs, branches: branches,
+    bySku: Object.keys(by).map(function (k) { return by[k]; }).sort(function (a, b) { return b.qty - a.qty; }) };
+  if (opts.raw) result.items = items.slice(0, 300);
+  return result;
 }
 
 /** "yyyy-MM-ddTHH:mm:ss(.SSS)" en hora de Chile → epoch ms. */

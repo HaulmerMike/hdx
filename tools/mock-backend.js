@@ -6,27 +6,29 @@ const E = require(path.join(__dirname, '..', 'backend', 'Engine.js'));
 const PAGE = process.argv[2]; const PORT = Number(process.argv[3] || 8767);
 const ENGINE_EVERY = Number(process.env.ENGINE_EVERY || 20) * 1000; const AUTO_SALES = process.env.AUTO_SALES === '1';
 let stored = null; let state = null; let trigger = false; const log = [];
-const secrets = { CAT_BASE_URL: 'https://mock.gateway/catalogue', CAT_API_KEY: 'mock-key', CAT_RESOURCE: 'mock-catalog', SALES_BASE_URL: 'https://mock.sales', SALES_API_KEY: 'mock-sales-key', SALES_TAX_ID: '76264675' };
+const secrets = { CAT_BASE_URL: 'https://mock.gateway/catalogue', CAT_API_KEY: 'mock-key', CAT_RESOURCE: 'mock-catalog', SALES_BASE_URL: 'https://mock.sales', SALES_API_KEY: '', SALES_TAX_ID: '76264675', GASTRO_BASE_URL: 'https://mock.gastro', GASTRO_API_KEY: 'mock-gastro-key', GASTRO_RESOURCE: 'mock-gastro', GASTRO_BRANCH_ID: '' };
 const sha = s => crypto.createHash('sha256').update(s, 'utf8').digest('hex');
 // catálogo simulado (misma estructura que el de dev)
 const ROWS = [['Pisco', 'PSCO', 'Combinados', true], ['Whisky', 'WSKY', 'Combinados', true], ['Gin', 'GINT', 'Combinados', true], ['Fernet', 'FRNT', 'Combinados', true], ['Cerveza', 'CERV', 'Cervezas', true], ['Michelada', 'MICH', 'Cervezas', true], ['Bebida', 'BEBD', 'Sin alcohol', false], ['Jugo', 'JUGO', 'Sin alcohol', false], ['Red Bull', 'RBLL', 'Sin alcohol', false], ['Agua', 'AGUA', 'Sin alcohol', false], ['Tropical Gin', 'TGIN', 'Cócteles', false], ['Ramazzotti', 'RAMZ', 'Cócteles', false], ['Mojito', 'MOJT', 'Cócteles', false], ['Sangría', 'SANG', 'Cócteles', false], ['Aperol Spritz', 'APRL', 'Cócteles', false], ['Tequila Margarita', 'MARG', 'Cócteles', false], ['Caipirinha', 'CAIP', 'Cócteles', false]];
 const CAT = ROWS.map((r, i) => ({ id: 1797700 + i, name: r[0], price: 100, sku: r[1], categories: [r[2]], active: true, hasVariants: r[3] }));
-const pushed = []; const salesLines = []; let saleSeq = 56000;
+const pushed = []; const attentions = []; let attSeq = 2400, lineSeq = 5000;
 const fmtLocal = d => { const p = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) + '.' + String(d.getMilliseconds()).padStart(3, '0'); };
 const parseLocal = s => new Date(String(s).replace(' ', 'T')).getTime();
+// Ventas con la estructura de la API de Gastronomía: una atención cerrada y pagada con sus productos.
 function sell(sku, qty, when) {
-  const c = CAT.find(x => x.sku === sku); if (!c) return null; const id = ++saleSeq; const at = when || Date.now();
-  const line = { saleId: id, saleDate: fmtLocal(new Date(at)), idCatalogue: secrets.CAT_RESOURCE, nameCatalogue: 'Haulmerland Barra', productId: c.id, itemName: c.name, itemCode: c.sku, itemUnitPrice: c.price, itemQuantity: qty, itemTotal: c.price * qty, deviceId: 999 };
-  salesLines.push(line); return line;
+  const c = CAT.find(x => x.sku === sku); if (!c) return null; const at = when || Date.now();
+  const line = { productId: ++lineSeq, productCatalogueId: c.id, catalogueResource: secrets.CAT_RESOURCE, name: c.name, quantity: qty, unitPrice: c.price, totalAmount: c.price * qty, isManualProduct: false, isPack: false, packItems: [] };
+  const att = { attentionId: ++attSeq, completedAt: new Date(at).toISOString(), totalAmount: c.price * qty, restaurantBranchId: 134, restaurantBranchName: 'Haulmerland Barra', catalogueResource: secrets.CAT_RESOURCE, origin: { typeCode: 'PICKUP', typeName: 'Mostrador', channel: 'POS', deviceId: null }, payments: [{ paymentMethodName: 'Efectivo', amount: c.price * qty }], products: [line] };
+  attentions.push(att); return att;
 }
-function salesItems(initMs, endMs) { return salesLines.filter(l => { const t = parseLocal(l.saleDate); return t >= initMs && t <= endMs; }); }
+function salesItems(initMs, endMs) { return attentions.filter(a => { const t = Date.parse(a.completedAt); return t >= initMs && t <= endMs; }); }
 function salesSummary(init, end, opts) {
-  const items = salesItems(parseLocal(init), parseLocal(end)); const catalogs = {}; items.forEach(it => { const k = it.idCatalogue || '(sin catálogo)'; catalogs[k] = (catalogs[k] || 0) + 1; });
-  const mine = items.filter(it => it.idCatalogue === secrets.CAT_RESOURCE); const by = {};
-  mine.forEach(it => { const o = by[it.itemCode] || (by[it.itemCode] = { sku: it.itemCode, productId: it.productId, name: it.itemName, qty: 0, total: 0, last: '' }); o.qty += it.itemQuantity; o.total += it.itemTotal; if (it.saleDate > o.last) o.last = it.saleDate; });
-  const r = { total: items.length, matched: mine.length, catalog: secrets.CAT_RESOURCE, catalogs, bySku: Object.values(by).sort((a, b) => b.qty - a.qty) }; if (opts && opts.raw) r.items = (opts.all ? items : mine).slice(0, 300); return r;
+  const atts = salesItems(parseLocal(init), parseLocal(end)); const catalogs = {}, branches = {}, by = {}; let total = 0, matched = 0; const items = [];
+  const byId = {}; ((stored && stored.products) || []).forEach(p => { if (p.catalogId) byId[String(p.catalogId)] = p.t; });
+  atts.forEach(a => { const b = a.restaurantBranchId + ' ' + a.restaurantBranchName; branches[b] = (branches[b] || 0) + 1; (a.products || []).forEach(p => { total++; const cr = p.catalogueResource || '(sin catálogo)'; catalogs[cr] = (catalogs[cr] || 0) + 1; if (cr !== secrets.CAT_RESOURCE) return; matched++; const key = byId[String(p.productCatalogueId)] || ('#' + p.productCatalogueId); const o = by[key] || (by[key] = { sku: key, productId: p.productCatalogueId, name: p.name, qty: 0, total: 0, last: '' }); o.qty += p.quantity; o.total += p.totalAmount; const when = fmtLocal(new Date(Date.parse(a.completedAt))); if (when > o.last) o.last = when; if (opts && opts.raw) items.push(Object.assign({ attentionId: a.attentionId, completedAt: a.completedAt }, p)); }); });
+  const r = { source: 'gastronomy', total, attentions: atts.length, matched, catalog: secrets.CAT_RESOURCE, catalogs, branches, bySku: Object.values(by).sort((a, b) => b.qty - a.qty) }; if (opts && opts.raw) r.items = items.slice(0, 300); return r;
 }
-function fetchSalesLines(cfg, fromMs, toMs) { const seq = {}; return salesItems(fromMs, toMs).filter(it => it.idCatalogue === secrets.CAT_RESOURCE).map(it => { const base = it.saleId + '|' + it.productId; const n = seq[base] = (seq[base] || 0) + 1; return E.engineMapLine(it, n, cfg, parseLocal); }); }
+function fetchSalesLines(cfg, fromMs, toMs) { const byId = {}; (cfg.products || []).forEach(p => { if (p.catalogId) byId[String(p.catalogId)] = p.t; }); const out = []; salesItems(fromMs, toMs).forEach(a => (a.products || []).forEach(p => { if (p.catalogueResource !== secrets.CAT_RESOURCE) return; out.push({ key: 'g' + a.attentionId + '|' + p.productId, at: Date.parse(a.completedAt), t: byId[String(p.productCatalogueId)] || '', qty: p.quantity }); })); return out; }
 function engineTick(force) {
   const cfg = stored; if (!cfg) return { skipped: 'sin configuración' };
   const mode = (cfg.settings || {}).mode || 'demo'; if (mode !== 'live' && !force) return { skipped: 'modo ' + mode };
@@ -44,7 +46,7 @@ http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x'); const cors = { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' };
   const send = (o) => { res.writeHead(200, cors); res.end(JSON.stringify(o)); };
   if (u.pathname === '/api' && req.method === 'GET') {
-    if (u.searchParams.get('integrations')) return send({ integrations: Object.fromEntries(Object.entries(secrets).map(([k, v]) => [k, k.includes('KEY') ? (v.length > 8 ? v.slice(0, 4) + '…' + v.slice(-4) : '••••') : v])), version: 10 });
+    if (u.searchParams.get('integrations')) return send({ integrations: Object.fromEntries(Object.entries(secrets).map(([k, v]) => [k, k.includes('KEY') ? (v.length > 8 ? v.slice(0, 4) + '…' + v.slice(-4) : '••••') : v])), version: 11 });
     if (u.searchParams.get('log')) return send(log);
     if (u.searchParams.get('engine')) return send(engineStatus());
     if (u.searchParams.get('state')) { if (!state) return send({ srev: 0, empty: true }); if (Number(u.searchParams.get('srev') || -1) === state.srev) return send({ srev: state.srev, same: true }); return send(E.enginePublicState(state)); }
@@ -78,9 +80,9 @@ http.createServer((req, res) => {
     });
     return;
   }
-  if (u.pathname === '/sell') { const l = sell(String(u.searchParams.get('t') || '').toUpperCase(), Number(u.searchParams.get('qty') || 1)); return send(l ? { ok: true, line: l } : { ok: false, error: 'ticker desconocido' }); }
+  if (u.pathname === '/sell') { const a = sell(String(u.searchParams.get('t') || '').toUpperCase(), Number(u.searchParams.get('qty') || 1)); return send(a ? { ok: true, attention: a } : { ok: false, error: 'ticker desconocido' }); }
   if (u.pathname === '/tick') { return send({ ok: true, summary: engineTick(true) }); }
-  if (u.pathname === '/state') { return send({ rev: stored && stored.rev, mode: stored && stored.settings && stored.settings.mode, trigger, k: state && state.k, srev: state && state.srev, pushed: pushed.slice(-20), cat: CAT.map(c => [c.sku, c.price]), sales: salesLines.length }); }
+  if (u.pathname === '/state') { return send({ rev: stored && stored.rev, mode: stored && stored.settings && stored.settings.mode, trigger, k: state && state.k, srev: state && state.srev, pushed: pushed.slice(-20), cat: CAT.map(c => [c.sku, c.price]), sales: attentions.length }); }
   let html = fs.readFileSync(PAGE, 'utf8').replace(/const BACKEND_URL='[^']*';/, "const BACKEND_URL='http://localhost:" + PORT + "/api';");
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(html);
 }).listen(PORT, () => console.log('mock backend on http://localhost:' + PORT + ' · motor cada ' + ENGINE_EVERY / 1000 + ' s · ventas automáticas: ' + (AUTO_SALES ? 'sí' : 'no')));
