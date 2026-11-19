@@ -10,11 +10,10 @@
  *  - W = ventas en la ventana de 10 minutos. Precio objetivo = base + round((W - ref) / salesPerStep) * $50,
  *    con ref = settings.refSales * demanda (pop) del producto, +1 escalón si el stock está bajo 15 %. Cada evaluación mueve
  *    el precio hasta $100 y se mantiene entre $100 y $500. Happy Hour aplica el descuento sobre el precio.
- *  - Índice HDX (base 1000) ponderado por volumen, ruedas (tiers) cada minuto, noticias y traders deterministas con la semilla.
+ *  - Índice HDX (base 1000) ponderado por volumen, ruedas (tiers) cada minuto y noticias deterministas con la semilla.
  */
 
 var HDX_STEP = 50, HDX_PMIN = 100, HDX_PMAX = 500;
-var HDX_TRADER_NAMES = ["La Loba de Haulmerland", "Warren Piscola", "El Oráculo del Fernet", "Gordon Gin", "Doña Dividendos", "Capitán Caipirinha", "La Mano Invisible", "Señor Spritz", "Michelada Capital", "Tío Refill", "Bull de Bellavista", "La Bajista", "Cuenta Corriente Jr.", "Fondo Mutuo Mojito", "El Inversionista Hidratado", "Tasa Fija"];
 
 function hdxClamp(v, a, b) { return v < a ? a : v > b ? b : v; }
 function hdxSnap(v) { return Math.round(v / HDX_STEP) * HDX_STEP; }
@@ -99,12 +98,6 @@ function engineNews(state, cfg, k, t, C) {
   state.news = state.news.slice(0, 8);
 }
 
-function engineTraders(state, cfg, k, C) {
-  var r = hdxRng(hdxHash32(cfg.seed, 4242, Math.floor(k / C.TRADER_EVAL)));
-  var names = HDX_TRADER_NAMES.slice().sort(function () { return r() - 0.5; }).slice(0, 8);
-  state.traders = names.map(function (n, i) { var drinks = 2 + Math.floor(r() * 11); var avgPaid = i < 3 ? Math.round((100 + r() * 120) / 10) * 10 : Math.round((120 + r() * 330) / 10) * 10; return { name: n, drinks: drinks, avgPaid: avgPaid, spent: drinks * avgPaid, tx: Math.floor(r() * 7), save: Math.round((state.avgBase - avgPaid) / state.avgBase * 100) }; });
-}
-
 /** Un tick del motor. demandFn(k, prod) devuelve las unidades vendidas de ese producto en el tick (ventas reales). */
 function engineStep(state, cfg, k, demandFn, C) {
   var t = state.open + k * C.TICK; var s = cfg.settings || {};
@@ -146,7 +139,6 @@ function engineStep(state, cfg, k, demandFn, C) {
   var idx = den ? Math.round(1000 * num / den * 10) / 10 : 1000; state.idx.push(idx); if (state.idx.length > C.MAXH) state.idx.shift();
   state.idxHi = Math.max(state.idxHi, idx); state.idxLo = Math.min(state.idxLo, idx);
   if (k % C.TIER_EVAL === 0) { engineTiers(state, cfg, C); engineNews(state, cfg, k, t, C); }
-  if (k % C.TRADER_EVAL === 0) engineTraders(state, cfg, k, C);
   state.k = k; state.t = t;
 }
 
