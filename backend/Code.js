@@ -32,7 +32,7 @@ const SECRET_DEFAULTS = {};
 function doGet(e) {
   const p = (e && e.parameter) || {};
   if (p.log) return json(readLog());
-  if (p.integrations) return json({ integrations: secretsStatus(), version: 11 });
+  if (p.integrations) return json({ integrations: secretsStatus(), version: 12 });
   if (p.engine) return json(engineStatus());
   if (p.state) {
     const st = readState();
@@ -90,10 +90,11 @@ function handleAction(body, password) {
         const given = body.secrets || {};
         const props = PropertiesService.getScriptProperties();
         const set = {};
-        SECRET_KEYS.forEach(function (k) { const v = given[k]; if (v != null && String(v).trim() !== '') set[k] = String(v).trim(); });
+        const del = [];
+        SECRET_KEYS.forEach(function (k) { const v = given[k]; if (v == null || String(v).trim() === '') return; const t = String(v).trim(); if (t === '-' || (k === 'GASTRO_BRANCH_ID' && t === '0')) del.push(k); else set[k] = t; }); // "-" borra la clave
         if (Object.keys(set).length) props.setProperties(set);
-        if (set.GASTRO_BRANCH_ID === '0' || set.GASTRO_BRANCH_ID === '-') props.deleteProperty('GASTRO_BRANCH_ID'); // "0" o "-" = todas las sucursales
-        logEvent('integraciones: ' + Object.keys(set).join(', '));
+        del.forEach(function (k) { props.deleteProperty(k); });
+        logEvent('integraciones: ' + Object.keys(set).concat(del.map(function (k) { return k + ' (borrada)'; })).join(', '));
         return json({ ok: true, integrations: secretsStatus() });
       }
       case 'catalog': {

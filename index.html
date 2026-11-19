@@ -368,6 +368,9 @@ const DEFAULT_SETTINGS=Object.assign({},CFG.settings);
 // Una configuración guardada antes de agregar un ajuste nuevo no lo trae: se completa con el valor por defecto.
 function withDefaults(cfg){ cfg.settings=Object.assign({},DEFAULT_SETTINGS,cfg.settings||{}); return cfg; }
 try{ const lo= BACKEND_URL? null : localStorage.getItem('hdx-local-cfg'); if(lo){ const o=JSON.parse(lo); if(o&&o.version===CFG.version&&(o.rev||0)>(CFG.rev||0)) CFG=withDefaults(o); else localStorage.removeItem('hdx-local-cfg'); } }catch(e){}
+let bootRev=null;
+try{ if(BACKEND_URL){ const rc=localStorage.getItem('hdx-remote-cfg')||sessionStorage.getItem('hdx-remote-cfg'); if(rc){ const o=JSON.parse(rc); if(o&&o.url===BACKEND_URL&&o.cfg&&o.cfg.version===CFG.version&&Array.isArray(o.cfg.products)){ CFG=withDefaults(o.cfg); bootRev=o.cfg.rev; } } } }catch(e){}
+function cacheRemote(cfg){ const t=JSON.stringify({url:BACKEND_URL,cfg:cfg}); try{ localStorage.setItem('hdx-remote-cfg',t); }catch(e){} try{ sessionStorage.setItem('hdx-remote-cfg',t); }catch(e){} }
 let LOCAL_ONLY=false; try{ LOCAL_ONLY= !BACKEND_URL && !!localStorage.getItem('hdx-local-cfg'); }catch(e){}
 
 /* ---------- constants (timing derived from settings.moveSec) ---------- */
@@ -819,12 +822,14 @@ function updateOverlay(now){
 }
 
 /* ---------- backend (Apps Script) ---------- */
-let backendRev=null, backendOk=false, adminPw='', pendingPw='';
+let backendRev=bootRev, backendOk=false, adminPw='', pendingPw='';
 function usingBackend(){ return !!BACKEND_URL; }
 async function backendFetch(){ const u=BACKEND_URL+(BACKEND_URL.includes('?')?'&':'?')+'rev='+(backendRev==null?-1:backendRev)+'&_='+Date.now(); const r=await fetch(u,{cache:'no-store'}); if(!r.ok) throw new Error('http '+r.status); return r.json(); }
 function applyRemote(cfg){
-  const prevMove=(CFG.settings&&CFG.settings.moveSec)||15; CFG=withDefaults(cfg); backendRev=cfg.rev; LOCAL_ONLY=false;
-  if(((cfg.settings&&cfg.settings.moveSec)||15)!==prevMove){ try{ sessionStorage.setItem('hdx-view',view); }catch(e){} try{ location.reload(); }catch(e){} return; }
+  const prevMove=(CFG.settings&&CFG.settings.moveSec)||15; CFG=withDefaults(cfg); backendRev=cfg.rev; LOCAL_ONLY=false; cacheRemote(cfg);
+  // El ritmo (moveSec) define constantes que se calculan al cargar: si cambió, se recarga una vez y la página parte con la configuración guardada.
+  // Seguro contra bucles: nunca más de una recarga por revisión.
+  if(((cfg.settings&&cfg.settings.moveSec)||15)*1000!==MOVE_MS){ let last=''; try{ last=sessionStorage.getItem('hdx-reload-rev')||''; }catch(e){} const key=String(cfg.rev)+'/'+((cfg.settings&&cfg.settings.moveSec)||15); if(last!==key){ try{ sessionStorage.setItem('hdx-reload-rev',key); sessionStorage.setItem('hdx-view',view); }catch(e){} try{ location.reload(); }catch(e){} return; } }
   sim=newSim(CFG); boardSig=''; lastRenderedK=-2; nextT=''; liveSrev=-1; if(liveMode()) statePoll();
   if(view==='admin'){ if(!draft || !userDirty()){ draft=null; if(unlocked) renderAdmin(); } else { if(unlocked) renderAdmin(); toast('Hay una configuración nueva publicada por otra persona. Tus cambios sin publicar se mantienen.','',6000); } }
   else if(shellBuilt){ buildTape(); buildNews(); tick(); }
@@ -847,6 +852,7 @@ async function statePoll(){
   liveBusy=false;
 }
 function applyState(st){
+  if(st.open!==CFG.openAt) return; // estado de una sesión anterior: el motor aún no se inicia para esta apertura
   const base=newSim(CFG); const byT=new Map(base.prods.map(p=>[p.t,p]));
   for(const sp of (st.prods||[])){ const p=byT.get(sp.t); if(!p) continue; Object.assign(p,{ price:sp.price, eff:sp.eff, stock:sp.stock, stock0:sp.stock0, suspended:!!sp.suspended, active:!!sp.active, hi:sp.hi, lo:sp.lo, W:sp.W, vol:sp.vol, pct10:sp.pct10||0, changedAt:sp.changedAt, dir:sp.dir, bigAt:sp.bigAt, bigDir:sp.bigDir, hist:sp.hist||[], full:sp.full||[], moves:sp.moves||[] }); }
   base.k=st.k; base.idx=(st.idx&&st.idx.length)?st.idx:[1000]; base.idxHi=st.idxHi||1000; base.idxLo=st.idxLo||1000; base.news=st.news||[]; base.traders=st.traders||[]; base.totalVol=st.totalVol||0;
@@ -888,7 +894,8 @@ function tick(){
   const now=Date.now(); const info=marketInfo(now);
   if(!shellBuilt){ renderShell(); shellBuilt=true; }
   if(!liveMode() && info.k>sim.k) advance(sim,info.k);
-  if(info.status==='pre' && sim.k<0 && !sim.tiers.t1.length){ computeTiers(sim); sim.idx=[1000]; }
+  // Sin historia todavía (pre-apertura, o en vivo antes de que el motor publique estado): el tablero muestra la carta a precio base.
+  if(!sim.tiers.t1.length && sim.prods.length && (info.status==='pre' || liveMode())){ computeTiers(sim); if(!sim.idx.length) sim.idx=[1000]; boardSig=''; }
   updateHeader(now,info);
   renderBoard(false);
   if(info.k!==lastRenderedK || info.status==='pre') updateBoard();
@@ -994,9 +1001,6 @@ function renderAdmin(){
         <label>Catálogo: URL del gateway<input id="sCAT_BASE_URL" placeholder="URL del gateway (la entrega el equipo)"></label>
         <label>Catálogo: clave (apikey)<input id="sCAT_API_KEY" type="password" autocomplete="off" placeholder="sin cambios"></label>
         <label>Catálogo: identificador (uuid)<input id="sCAT_RESOURCE" placeholder="uuid del catálogo"></label>
-        <label>Ventas: URL base<input id="sSALES_BASE_URL" placeholder="URL base de ventas (la entrega el equipo)"></label>
-        <label>Ventas: clave (X-API-Key)<input id="sSALES_API_KEY" type="password" autocomplete="off" placeholder="sin cambios"></label>
-        <label>Ventas: RUT del comercio<input id="sSALES_TAX_ID" placeholder="RUT sin dígito verificador"></label>
         <label>Gastronomía: URL base<input id="sGASTRO_BASE_URL" placeholder="URL base de Gastronomía (la entrega el equipo)"></label>
         <label>Gastronomía: clave (X-API-Key)<input id="sGASTRO_API_KEY" type="password" autocomplete="off" placeholder="sin cambios"></label>
         <label>Gastronomía: recurso (gastronomyId)<input id="sGASTRO_RESOURCE" placeholder="uuid de Gastronomía del espacio"></label>
@@ -1010,7 +1014,7 @@ function renderAdmin(){
         <button class="btn" id="pushBase">Enviar precios de apertura al catálogo</button>
       </div>
       <div id="integOut" class="note" style="margin-top:.8rem"></div>
-      <p class="note">Importar reemplaza la lista de productos por la del catálogo (ticker = SKU, sector = primera categoría) conservando precio base, stock y pin de los que ya existían; luego hay que publicar. "Enviar precios de apertura" escribe en el catálogo el precio base publicado de cada producto. Ventas: con clave y recurso de Gastronomía se leen las atenciones cerradas y pagadas (una línea por producto, con su id de catálogo); si no están, se usa la API antigua de ventas por ítem.</p>
+      <p class="note">Importar reemplaza la lista de productos por la del catálogo (ticker = SKU, sector = primera categoría) conservando precio base, stock y pin de los que ya existían; luego hay que publicar. "Enviar precios de apertura" escribe en el catálogo el precio base publicado de cada producto. Las ventas se leen de Gastronomía: atenciones cerradas y pagadas, una línea por producto con su id de catálogo. Cada campo muestra en gris el valor guardado en el servidor.</p>
     </div>
 
     <div class="card"><h2>Seguridad</h2><div class="grid">
@@ -1029,7 +1033,9 @@ function renderAdmin(){
   onInput('mode',el=>draft.settings.mode= el.value==='live'?'live':'demo'); onInput('refSales',el=>draft.settings.refSales=Math.max(0.5,+el.value||3.6)); onInput('perStep',el=>draft.settings.salesPerStep=Math.max(0.5,+el.value||2.5)); onInput('pushCat',el=>draft.settings.pushToCatalog=!!el.checked);
   const engOut=(html)=>{ const o=$('#engStatus'); if(o) o.innerHTML=html; };
   const engRender=(st)=>{ if(!st){ engOut('sin respuesta del servidor'); return; } const e=st.state; const line=[]; line.push('<span class="pill '+(st.trigger?'ok':'warn')+'" style="font-size:.85rem">'+(st.trigger?'MOTOR ACTIVO · corre cada minuto':'MOTOR DETENIDO')+'</span>'); line.push('modo publicado: <b style="color:var(--text)">'+(st.mode==='live'?'en vivo':'demo')+'</b>');
-    if(e){ const stText={pre:'pre-apertura',open:'abierto',closed:'cerrado',idle:'al día'}[e.status]||e.status; line.push('mercado '+stText+' · tick '+e.k+' · corridas '+e.runs+(e.lastRunAt?' · última '+hhmmss(e.lastRunAt)+' ('+e.lastRunMs+' ms)':'')); line.push('ventas contadas: '+e.counted+(e.lastFetch?' · última lectura '+e.lastFetch.lines+' líneas'+(e.lastFetch.error?' · error: '+esc(e.lastFetch.error):''):'')); if(e.lastError) line.push('<span style="color:var(--bad)">'+esc(e.lastError)+'</span>');
+    const stale= e && (e.open!==CFG.openAt || (e.prices||[]).map(p=>p.t).sort().join()!==(CFG.products||[]).filter(p=>!p.hidden).map(p=>p.t).sort().join());
+    if(e && stale && !st.trigger){ line.push('el último estado guardado es de una sesión anterior (otra apertura u otra carta): se reinicia al apretar "Iniciar motor"'); }
+    else if(e){ const stText={pre:'pre-apertura',open:'abierto',closed:'cerrado',idle:'al día'}[e.status]||e.status; line.push('mercado '+stText+' · tick '+e.k+' · corridas '+e.runs+(e.lastRunAt?' · última '+hhmmss(e.lastRunAt)+' ('+e.lastRunMs+' ms)':'')); line.push('ventas contadas: '+e.counted+(e.lastFetch?' · última lectura '+e.lastFetch.lines+' líneas'+(e.lastFetch.error?' · error: '+esc(e.lastFetch.error):''):'')); if(e.lastError) line.push('<span style="color:var(--bad)">'+esc(e.lastError)+'</span>');
       const pl=(e.pushLog||[]).slice(0,6); if(pl.length) line.push('últimos envíos al catálogo: '+pl.map(x=>x.t+' '+money(x.price)+(x.ok?'':' ✗')).join(', '));
       line.push('<div class="tblwrap" style="margin-top:.4rem"><table class="tbl"><thead><tr><th>Ticker</th><th class="num">Precio</th><th class="num">10 min</th><th class="num">Stock</th><th class="num">En catálogo</th></tr></thead><tbody>'+(e.prices||[]).map(p=>'<tr><td>'+p.t+'</td><td class="num">'+money(p.eff)+'</td><td class="num">'+p.W+'</td><td class="num">'+p.stock+'</td><td class="num">'+(p.pushed!=null?money(p.pushed):'—')+'</td></tr>').join('')+'</tbody></table></div>'); }
     else line.push('sin estado todavía: inicia el motor');
@@ -1065,10 +1071,10 @@ function renderAdmin(){
   bind('publish',publishDraft);
   /* integraciones */
   const integOut=(html)=>{ const o=$('#integOut'); if(o) o.innerHTML=html; };
-  const integStatus=async()=>{ const el=$('#integStatus'); if(!el) return; if(!usingBackend()){ el.textContent='esta página no tiene backend'; return; } try{ const r=await fetch(BACKEND_URL+(BACKEND_URL.includes('?')?'&':'?')+'integrations=1&_='+Date.now(),{cache:'no-store'}); const d=await r.json(); if(!d||!d.integrations){ el.textContent='el servidor aún no tiene la versión con integraciones'; return; } const s=d.integrations; const falt=['CAT_API_KEY','CAT_RESOURCE'].filter(k=>!s[k]); const gastro= s.GASTRO_API_KEY&&s.GASTRO_RESOURCE; if(!gastro && !s.SALES_API_KEY) falt.push('ventas (clave y recurso de Gastronomía)'); const ventasTxt= gastro? 'ventas: Gastronomía, recurso '+s.GASTRO_RESOURCE+(s.GASTRO_BRANCH_ID?' · sucursal '+s.GASTRO_BRANCH_ID:' · todas las sucursales')+' · clave '+s.GASTRO_API_KEY : 'ventas: API antigua por ítem, RUT '+s.SALES_TAX_ID+' · clave '+s.SALES_API_KEY; el.textContent= falt.length? 'faltan '+falt.join(', ') : 'catálogo '+s.CAT_RESOURCE+' · clave '+s.CAT_API_KEY+' · '+ventasTxt; ['CAT_BASE_URL','CAT_RESOURCE','SALES_BASE_URL','SALES_TAX_ID','GASTRO_BASE_URL','GASTRO_RESOURCE','GASTRO_BRANCH_ID'].forEach(k=>{ const i=$('#s'+k); if(i && !i.value) i.placeholder=s[k]||i.placeholder; }); }catch(e){ el.textContent='sin respuesta del servidor'; } };
+  const integStatus=async()=>{ const el=$('#integStatus'); if(!el) return; if(!usingBackend()){ el.textContent='esta página no tiene backend'; return; } try{ const r=await fetch(BACKEND_URL+(BACKEND_URL.includes('?')?'&':'?')+'integrations=1&_='+Date.now(),{cache:'no-store'}); const d=await r.json(); if(!d||!d.integrations){ el.textContent='el servidor aún no tiene la versión con integraciones'; return; } const s=d.integrations; const falt=['CAT_API_KEY','CAT_RESOURCE'].filter(k=>!s[k]); const gastro= s.GASTRO_API_KEY&&s.GASTRO_RESOURCE; if(!gastro) falt.push('ventas (clave y recurso de Gastronomía)'); const isDev=u=>/dev/i.test(String(u||'').replace(/^https?:\/\//,'').split('/')[0]); const envs=[s.CAT_BASE_URL,s.GASTRO_BASE_URL].filter(Boolean).map(isDev); const env= !envs.length? '' : envs.every(x=>x)? 'DEV' : envs.some(x=>x)? 'MEZCLA DEV / PRODUCCIÓN' : 'PRODUCCIÓN'; const ventasTxt= gastro? 'ventas: Gastronomía '+s.GASTRO_RESOURCE+(s.GASTRO_BRANCH_ID?' · sucursal '+s.GASTRO_BRANCH_ID:' · todas las sucursales')+' · clave '+s.GASTRO_API_KEY : 'ventas sin configurar'; el.innerHTML= (env?'<span class="pill '+(env==='PRODUCCIÓN'?'ok':'warn')+'" style="font-size:.8rem">'+env+'</span> ':'')+esc(falt.length? 'faltan '+falt.join(', ') : 'catálogo '+s.CAT_RESOURCE+' · clave '+s.CAT_API_KEY+' · '+ventasTxt); ['CAT_BASE_URL','CAT_RESOURCE','GASTRO_BASE_URL','GASTRO_RESOURCE','GASTRO_BRANCH_ID'].forEach(k=>{ const i=$('#s'+k); if(i) i.placeholder=s[k]||'—'; }); }catch(e){ el.textContent='sin respuesta del servidor'; } };
   integStatus();
   const busy=(id,on)=>{ const b=$('#'+id); if(b){ b.disabled=on; } };
-  bind('saveSecrets',async()=>{ const secrets={}; ['CAT_BASE_URL','CAT_API_KEY','CAT_RESOURCE','SALES_BASE_URL','SALES_API_KEY','SALES_TAX_ID','GASTRO_BASE_URL','GASTRO_API_KEY','GASTRO_RESOURCE','GASTRO_BRANCH_ID'].forEach(k=>{ const v=($('#s'+k)||{}).value; if(v&&v.trim()) secrets[k]=v.trim(); }); if(!Object.keys(secrets).length){ toast('No hay valores nuevos que guardar'); return; } busy('saveSecrets',true); try{ await backendAction('secrets',{secrets}); ['CAT_API_KEY','SALES_API_KEY','GASTRO_API_KEY'].forEach(k=>{ const i=$('#s'+k); if(i) i.value=''; }); toast('Guardado en el servidor'); integStatus(); }catch(e){ toast('No se pudo guardar: '+e.message,'',6000); } busy('saveSecrets',false); });
+  bind('saveSecrets',async()=>{ const secrets={}; ['CAT_BASE_URL','CAT_API_KEY','CAT_RESOURCE','GASTRO_BASE_URL','GASTRO_API_KEY','GASTRO_RESOURCE','GASTRO_BRANCH_ID'].forEach(k=>{ const v=($('#s'+k)||{}).value; if(v&&v.trim()) secrets[k]=v.trim(); }); if(!Object.keys(secrets).length){ toast('No hay valores nuevos que guardar'); return; } busy('saveSecrets',true); try{ await backendAction('secrets',{secrets}); ['CAT_BASE_URL','CAT_API_KEY','CAT_RESOURCE','GASTRO_BASE_URL','GASTRO_API_KEY','GASTRO_RESOURCE','GASTRO_BRANCH_ID'].forEach(k=>{ const i=$('#s'+k); if(i) i.value=''; }); toast('Guardado en el servidor'); integStatus(); }catch(e){ toast('No se pudo guardar: '+e.message,'',6000); } busy('saveSecrets',false); });
   const catalogTable=(list)=>`<div class="tblwrap"><table class="tbl"><thead><tr><th>SKU</th><th>Nombre</th><th class="num">Precio</th><th>Categorías</th><th>Id</th><th>Activo</th><th>Variantes</th></tr></thead><tbody>${list.map(c=>`<tr><td>${esc(c.sku||'—')}</td><td>${esc(c.name)}</td><td class="num">${money(c.price)}</td><td>${esc((c.categories||[]).join(', '))}</td><td>${c.id}</td><td>${c.active?'sí':'no'}</td><td>${c.hasVariants?'sí':'—'}</td></tr>`).join('')}</tbody></table></div>`;
   bind('testCatalog',async()=>{ busy('testCatalog',true); integOut('Consultando el catálogo…'); try{ const d=await backendAction('catalog'); integOut(`<b style="color:var(--text)">${d.products.length} productos</b> en el catálogo ${esc(d.resource)}${catalogTable(d.products)}`); }catch(e){ integOut('Error: '+esc(e.message)); } busy('testCatalog',false); });
   bind('importCatalog',async()=>{ busy('importCatalog',true); integOut('Importando…'); try{ const d=await backendAction('catalog'); const r=mergeCatalog(d.products); toast(`Importados ${d.products.length} productos: ${r.nuevos} nuevos, ${r.iguales} ya existían${r.quitados.length?', quitados '+r.quitados.join(', '):''}. Revisa precios base y publica.`,'',8000); renderAdmin(); }catch(e){ integOut('Error: '+esc(e.message)); busy('importCatalog',false); } });
